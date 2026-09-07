@@ -22,9 +22,24 @@ PASSWORD_ITERATIONS = 240_000
 TUNNEL_URL = re.compile(r'https://[a-z0-9-]+\.trycloudflare\.com')
 
 
+def private_runtime_path(filename):
+    project = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+    return os.path.join(project, '.private', filename)
+
+
+def local_data_path(filename):
+    base = os.environ.get('LOCALAPPDATA')
+    if not base:
+        base = os.path.join(os.path.expanduser('~'), 'AppData', 'Local')
+    return os.path.join(base, 'References', filename)
+
+
 def login_path():
-    base = os.environ.get('LOCALAPPDATA') or os.path.expanduser('~')
-    return os.path.join(base, 'References', 'phone-login.json')
+    return local_data_path('phone-login.json')
+
+
+def login_locations():
+    return (login_path(), private_runtime_path('phone-login.json'))
 
 
 def make_login(username, password):
@@ -43,26 +58,30 @@ def make_login(username, password):
 
 
 def save_login(username, password, path=None):
-    path = path or login_path()
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    temporary = path + '.tmp'
-    with open(temporary, 'w', encoding='utf-8') as stream:
-        json.dump(make_login(username, password), stream)
-    os.replace(temporary, path)
-    return path
+    locations = (path,) if path else login_locations()
+    login = make_login(username, password)
+    for location in locations:
+        os.makedirs(os.path.dirname(location), exist_ok=True)
+        temporary = location + '.tmp'
+        with open(temporary, 'w', encoding='utf-8') as stream:
+            json.dump(login, stream)
+        os.replace(temporary, location)
+    return locations[0]
 
 
 def load_login(path=None):
-    path = path or login_path()
-    try:
-        with open(path, encoding='utf-8') as stream:
-            login = json.load(stream)
-        required = {'username', 'iterations', 'salt', 'digest'}
-        if not required.issubset(login):
-            raise ValueError
-        return login
-    except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
-        raise OSError('Phone login is not configured') from error
+    locations = (path,) if path else login_locations()
+    for location in locations:
+        try:
+            with open(location, encoding='utf-8') as stream:
+                login = json.load(stream)
+            required = {'username', 'iterations', 'salt', 'digest'}
+            if not required.issubset(login):
+                raise ValueError
+            return login
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            continue
+    raise OSError('Phone login is not configured')
 
 
 def check_authorization(header, login):
@@ -83,9 +102,9 @@ def check_authorization(header, login):
 
 def cloudflared_path():
     configured = os.environ.get('REFERENCES_CLOUDFLARED')
-    local = os.path.join(os.environ.get('LOCALAPPDATA', ''),
-                         'References', 'cloudflared.exe')
-    for candidate in (configured, local, shutil.which('cloudflared')):
+    for candidate in (configured, local_data_path('cloudflared.exe'),
+                      private_runtime_path('cloudflared.exe'),
+                      shutil.which('cloudflared')):
         if candidate and os.path.isfile(candidate):
             return candidate
     raise OSError('Cloudflare Tunnel is not installed for References')
