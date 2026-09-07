@@ -8,10 +8,13 @@ protected view viewport; never replace it with a top-level Popup/QMenu. The
 opacity editor is embedded too. Background alpha MUST remain zero in both
 editing and locked modes: alpha 1/255 blocked clicks across the whole desktop
 and was reverted. Only images and embedded controls should intercept editing
-input. PhoneReceiver is started explicitly by the pairing
-panel, accepts token-authenticated LAN uploads, and passes decoded QImages to
-the GUI thread. ReplaceReference preserves the document anchor and supports
-Undo. Keep pairing tokens/image data out of logs and GitHub.
+input. PhoneReceiver is started explicitly by the pairing panel, binds only to
+loopback, and uses an outbound Cloudflare Quick Tunnel for phone access through
+the PC's VPN. Both the random URL token and HTTP Basic login are required. The
+password is stored only as a salted verifier under `%LOCALAPPDATA%\\References`,
+outside Git. Uploaded images stay in memory and pass to the GUI thread as
+decoded QImages. ReplaceReference preserves the document anchor and supports
+Undo. Keep pairing tokens, login data, and image data out of logs and GitHub.
 
 The private GitHub repository and README present this project as References.
 Keep internal BeeRef module names, settings paths, bridge paths and original

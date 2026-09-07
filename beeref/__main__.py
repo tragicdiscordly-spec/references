@@ -406,7 +406,7 @@ class BeeRefMainWindow(QtWidgets.QMainWindow):
         # A native tray QMenu is another capturable popup. Show our child
         # controls on either left or right click instead.
         self.tray_icon.activated.connect(self._show_reference_controls)
-        self.tray_icon.setToolTip('BeeRef overlay: editable')
+        self.tray_icon.setToolTip('References: editable')
         self.tray_icon.show()
 
     def _show_reference_controls(self, reason):
@@ -421,8 +421,9 @@ class BeeRefMainWindow(QtWidgets.QMainWindow):
 
     def start_phone_receiver(self):
         if getattr(self, '_phone_receiver', None) is None:
-            from beeref.phone_receiver import PhoneReceiver
-            self._phone_receiver = PhoneReceiver(self)
+            from beeref.phone_receiver import PhoneReceiver, load_login
+            self._phone_receiver = PhoneReceiver(
+                self, bind='127.0.0.1', login=load_login(), cloudflare=True)
             self._phone_receiver.image_received.connect(self._receive_phone_image)
         return self._phone_receiver
 

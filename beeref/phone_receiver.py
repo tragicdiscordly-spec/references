@@ -1,8 +1,16 @@
-"""Explicitly started LAN-only image inbox; no cloud or disk uploads."""
+"""Explicitly started, authenticated image inbox for phone uploads."""
+import base64
+import hashlib
 import hmac
-import secrets
-import threading
 import ipaddress
+import json
+import os
+import queue
+import re
+import secrets
+import shutil
+import subprocess
+import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from PyQt6 import QtCore, QtGui
@@ -10,6 +18,124 @@ from PyQt6.QtNetwork import QNetworkInterface
 
 MAX_UPLOAD = 20 * 1024 * 1024
 MAX_PIXELS = 40_000_000
+PASSWORD_ITERATIONS = 240_000
+TUNNEL_URL = re.compile(r'https://[a-z0-9-]+\.trycloudflare\.com')
+
+
+def login_path():
+    base = os.environ.get('LOCALAPPDATA') or os.path.expanduser('~')
+    return os.path.join(base, 'References', 'phone-login.json')
+
+
+def make_login(username, password):
+    """Create a salted verifier so the phone password is never stored."""
+    if not username or not password:
+        raise ValueError('Phone username and password cannot be empty')
+    salt = secrets.token_bytes(16)
+    digest = hashlib.pbkdf2_hmac('sha256', password.encode(), salt,
+                                 PASSWORD_ITERATIONS)
+    return {
+        'username': username,
+        'iterations': PASSWORD_ITERATIONS,
+        'salt': base64.b64encode(salt).decode('ascii'),
+        'digest': base64.b64encode(digest).decode('ascii'),
+    }
+
+
+def save_login(username, password, path=None):
+    path = path or login_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    temporary = path + '.tmp'
+    with open(temporary, 'w', encoding='utf-8') as stream:
+        json.dump(make_login(username, password), stream)
+    os.replace(temporary, path)
+    return path
+
+
+def load_login(path=None):
+    path = path or login_path()
+    try:
+        with open(path, encoding='utf-8') as stream:
+            login = json.load(stream)
+        required = {'username', 'iterations', 'salt', 'digest'}
+        if not required.issubset(login):
+            raise ValueError
+        return login
+    except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
+        raise OSError('Phone login is not configured') from error
+
+
+def check_authorization(header, login):
+    try:
+        scheme, encoded = header.split(' ', 1)
+        if scheme.lower() != 'basic':
+            return False
+        username, password = base64.b64decode(encoded, validate=True).decode().split(':', 1)
+        salt = base64.b64decode(login['salt'], validate=True)
+        expected = base64.b64decode(login['digest'], validate=True)
+        actual = hashlib.pbkdf2_hmac('sha256', password.encode(), salt,
+                                     int(login['iterations']))
+        return (hmac.compare_digest(username, login['username'])
+                and hmac.compare_digest(actual, expected))
+    except (AttributeError, ValueError, TypeError, KeyError):
+        return False
+
+
+def cloudflared_path():
+    configured = os.environ.get('REFERENCES_CLOUDFLARED')
+    local = os.path.join(os.environ.get('LOCALAPPDATA', ''),
+                         'References', 'cloudflared.exe')
+    for candidate in (configured, local, shutil.which('cloudflared')):
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    raise OSError('Cloudflare Tunnel is not installed for References')
+
+
+class CloudflareTunnel:
+    def __init__(self, port, executable=None, timeout=20):
+        executable = executable or cloudflared_path()
+        flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+        self.process = subprocess.Popen(
+            [executable, 'tunnel', '--url', f'http://127.0.0.1:{port}',
+             '--no-autoupdate'], stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, text=True, encoding='utf-8',
+            errors='replace', creationflags=flags)
+        lines = queue.Queue()
+        self.reader = threading.Thread(target=self._read_output,
+                                       args=(lines,), daemon=True)
+        self.reader.start()
+        try:
+            origin = None
+            while True:
+                line = lines.get(timeout=timeout)
+                if line is None:
+                    raise OSError('Cloudflare Tunnel stopped before it produced a link')
+                match = TUNNEL_URL.search(line)
+                if match:
+                    origin = match.group(0)
+                if origin and 'Registered tunnel connection' in line:
+                    self.origin = origin
+                    break
+        except (queue.Empty, OSError):
+            self.stop()
+            raise OSError('Cloudflare Tunnel could not create a phone link')
+
+    def _read_output(self, lines):
+        for line in self.process.stdout:
+            lines.put(line)
+        lines.put(None)
+
+    def stop(self):
+        if self.process.poll() is None:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait(timeout=2)
+        if self.process.stdout is not None:
+            self.process.stdout.close()
+        self.reader.join(timeout=2)
 
 
 def lan_address(interfaces=None):
@@ -68,7 +194,8 @@ finally{send.disabled=false;}};function statusText(s){document.getElementById('s
 class PhoneReceiver(QtCore.QObject):
     image_received = QtCore.pyqtSignal(object)
 
-    def __init__(self, parent=None, bind='0.0.0.0'):
+    def __init__(self, parent=None, bind='0.0.0.0', login=None,
+                 cloudflare=False, tunnel_factory=CloudflareTunnel):
         super().__init__(parent)
         self.token = secrets.token_urlsafe(18)
         receiver = self
@@ -81,7 +208,8 @@ class PhoneReceiver(QtCore.QObject):
                 super().setup()
                 self.connection.settimeout(10)
 
-            def reply(self, code, body, content_type='text/plain; charset=utf-8'):
+            def reply(self, code, body, content_type='text/plain; charset=utf-8',
+                      headers=None):
                 body = body.encode() if isinstance(body, str) else body
                 self.send_response(code)
                 self.send_header('Content-Type', content_type)
@@ -89,21 +217,36 @@ class PhoneReceiver(QtCore.QObject):
                 self.send_header('Cache-Control', 'no-store')
                 self.send_header('Referrer-Policy', 'no-referrer')
                 self.send_header('X-Content-Type-Options', 'nosniff')
+                for name, value in (headers or {}).items():
+                    self.send_header(name, value)
                 self.end_headers()
                 self.wfile.write(body)
 
             def authorized(self, suffix=''):
                 return hmac.compare_digest(self.path, '/' + receiver.token + suffix)
 
+            def logged_in(self):
+                if receiver.login is None:
+                    return True
+                if check_authorization(self.headers.get('Authorization'), receiver.login):
+                    return True
+                self.reply(401, 'Login required', headers={
+                    'WWW-Authenticate': 'Basic realm="References phone upload", charset="UTF-8"'})
+                return False
+
             def do_GET(self):
                 if not self.authorized():
                     self.reply(404, 'Not found')
+                    return
+                if not self.logged_in():
                     return
                 self.reply(200, PAGE, 'text/html; charset=utf-8')
 
             def do_POST(self):
                 if not self.authorized('/upload'):
                     self.reply(403, 'Invalid pairing link')
+                    return
+                if not self.logged_in():
                     return
                 try:
                     length = int(self.headers.get('Content-Length', '0'))
@@ -120,14 +263,26 @@ class PhoneReceiver(QtCore.QObject):
                 receiver.image_received.emit(image)
                 self.reply(202, 'Sent to References. Check the reference on your PC.')
 
+        self.login = login
+        self.tunnel = None
         host = lan_address() if bind == '0.0.0.0' else bind
         self.server = HTTPServer((bind, 0), Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.port = self.server.server_port
         self.url = f'http://{host}:{self.port}/{self.token}'
+        if cloudflare:
+            try:
+                self.tunnel = tunnel_factory(self.port)
+                self.url = f'{self.tunnel.origin}/{self.token}'
+            except Exception:
+                self.stop()
+                raise
 
     def stop(self):
+        if self.tunnel is not None:
+            self.tunnel.stop()
+            self.tunnel = None
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=2)

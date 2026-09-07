@@ -1,8 +1,9 @@
+import base64
 import http.client
 import pytest
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets
-from beeref.phone_receiver import PhoneReceiver, MAX_UPLOAD, lan_address
+from beeref.phone_receiver import PhoneReceiver, MAX_UPLOAD, lan_address, make_login
 from PyQt6.QtNetwork import QNetworkInterface
 from beeref.items import BeePixmapItem
 
@@ -36,7 +37,7 @@ def test_pairing_link_uses_lan_instead_of_wireguard_address():
 
 
 def test_phone_endpoint_requires_pairing_and_valid_image(qapp, qtbot):
-    receiver = PhoneReceiver(bind='127.0.0.1')
+    receiver = PhoneReceiver(bind='127.0.0.1', login=make_login('gloom', 'secret'))
     received = []
     receiver.image_received.connect(received.append)
     def request(method, path, data=None, headers=None):
@@ -46,14 +47,20 @@ def test_phone_endpoint_requires_pairing_and_valid_image(qapp, qtbot):
         result = response.status, response.read()
         connection.close()
         return result
+    authorization = 'Basic ' + base64.b64encode(b'gloom:secret').decode()
+    auth = {'Authorization': authorization}
     try:
         assert request('GET', '/')[0] == 404
-        assert request('GET', '/' + receiver.token)[0] == 200
+        assert request('GET', '/' + receiver.token)[0] == 401
+        assert request('GET', '/' + receiver.token,
+                       headers={'Authorization': 'Basic bad'})[0] == 401
+        assert request('GET', '/' + receiver.token, headers=auth)[0] == 200
         assert request('POST', '/wrong/upload', image_bytes())[0] == 403
-        assert request('POST', '/' + receiver.token + '/upload', b'garbage')[0] == 400
+        assert request('POST', '/' + receiver.token + '/upload', image_bytes())[0] == 401
+        assert request('POST', '/' + receiver.token + '/upload', b'garbage', auth)[0] == 400
         assert request('POST', '/' + receiver.token + '/upload', b'',
-                       {'Content-Length': str(MAX_UPLOAD + 1)})[0] == 413
-        assert request('POST', '/' + receiver.token + '/upload', image_bytes())[0] == 202
+                       {**auth, 'Content-Length': str(MAX_UPLOAD + 1)})[0] == 413
+        assert request('POST', '/' + receiver.token + '/upload', image_bytes(), auth)[0] == 202
         qtbot.waitUntil(lambda: len(received) == 1)
         assert received[0].size() == QtCore.QSize(20, 10)
     finally:
@@ -100,7 +107,9 @@ def test_visible_menu_navigation_lays_out_new_children(main_window, qtbot, monke
     item.setSelected(True)
     panel = view.reference_controls
     monkeypatch.setattr(main_window, 'start_phone_receiver',
-                        lambda: SimpleNamespace(url='http://127.0.0.1:1234/test'))
+                        lambda: SimpleNamespace(
+                            url='https://example.trycloudflare.com/test',
+                            login={'username': 'gloom'}))
     view.on_context_menu(QtCore.QPoint(20, 20))
 
     def click(text):

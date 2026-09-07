@@ -104,10 +104,14 @@ class ReferenceControls(QtWidgets.QFrame):
 
     def phone_page(self):
         self.clear()
-        self.button('← Back', lambda: self.open())
+        def stop_and_go_back():
+            self.view.parent.stop_phone_receiver()
+            self.open()
+        self.button('← Back', stop_and_go_back)
         try:
             receiver = self.view.parent.start_phone_receiver()
-            message = 'Open this private link on your phone (same Wi-Fi):'
+            message = ('Open this temporary HTTPS link on your phone. '
+                       'Log in as ' + receiver.login['username'] + ':')
             url = receiver.url
         except OSError as error:
             message, url = 'Could not start phone receiver: ' + str(error), ''
@@ -117,6 +121,6 @@ class ReferenceControls(QtWidgets.QFrame):
         field = QtWidgets.QLineEdit(url, self)
         field.setReadOnly(True)
         self.layout.addWidget(field)
-        self.button('Copy private link', lambda: QtWidgets.QApplication.clipboard().setText(url))
+        self.button('Copy secure link', lambda: QtWidgets.QApplication.clipboard().setText(url))
         self.button('Stop phone receiving', self.view.parent.stop_phone_receiver)
         self.present()
