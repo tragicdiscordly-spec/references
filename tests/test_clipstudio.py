@@ -194,6 +194,48 @@ def test_modern_bridge_never_estimates_missing_matrix():
     assert ClipStudioPinController._document_to_global_transform(dict(_state(1), protocol=3)) is None
 
 
+def test_overlay_skips_idle_redraws_but_repaints_after_motion_or_hide(qapp, monkeypatch):
+    overlay = LockedReferenceOverlay()
+    item = BeePixmapItem(QtGui.QImage(20, 20, QtGui.QImage.Format.Format_ARGB32))
+    state = _state(1)
+    transform = ClipStudioPinController._document_to_global_transform
+    overlay.set_reference(item, QtGui.QTransform(), state, transform(state))
+    redraws, raises = [], []
+    monkeypatch.setattr(overlay, 'update', lambda: redraws.append(True))
+    monkeypatch.setattr(overlay, 'raise_', lambda: raises.append(True))
+    for timestamp in range(100):
+        heartbeat = dict(state, timestamp=timestamp)
+        overlay.update_state(heartbeat, transform(heartbeat))
+    assert redraws == raises == []
+    moved = _state(1, center=(101, 100))
+    overlay.update_state(moved, transform(moved))
+    assert len(redraws) == len(raises) == 1
+    overlay.hide()
+    overlay.update_state(moved, transform(moved))
+    assert overlay.isVisible()
+    assert len(redraws) == len(raises) == 2
+    overlay.clear_reference()
+    assert overlay._source.isNull()
+    assert overlay._image_to_overlay is None
+    overlay.close()
+
+
+def test_reference_snapshot_shares_pixels_and_detaches_on_write(qapp):
+    pixmap = QtGui.QPixmap(20, 20)
+    pixmap.fill(QtCore.Qt.GlobalColor.red)
+    item = SimpleNamespace(grayscale=False, pixmap=lambda: pixmap)
+    snapshot = LockedReferenceOverlay._source_pixmap(item)
+    assert snapshot.cacheKey() == pixmap.cacheKey()
+    pixmap.fill(QtCore.Qt.GlobalColor.blue)
+    assert snapshot.toImage().pixelColor(0, 0) == QtGui.QColor('red')
+    item.grayscale = True
+    item._grayscale_pixmap = QtGui.QPixmap(20, 20)
+    item._grayscale_pixmap.fill(QtCore.Qt.GlobalColor.gray)
+    snapshot = LockedReferenceOverlay._source_pixmap(item)
+    assert snapshot.cacheKey() == item._grayscale_pixmap.cacheKey()
+    assert snapshot.toImage().pixelColor(0, 0) == QtGui.QColor(QtCore.Qt.GlobalColor.gray)
+
+
 def test_bridge_replays_unchanged_state_on_restart_and_expires(qapp, tmp_path, monkeypatch):
     bridge = LocalTransformBridge()
     bridge.path = str(tmp_path / 'state.json')

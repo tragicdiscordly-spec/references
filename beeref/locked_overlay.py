@@ -66,6 +66,7 @@ class LockedReferenceOverlay(QtWidgets.QWidget):
         self._item_to_global = None
         self._active = False
         self._last_state = None
+        self._last_render_key = None
         self.hide()
 
     @property
@@ -88,6 +89,7 @@ class LockedReferenceOverlay(QtWidgets.QWidget):
         self._coordinate_space = None
         self._active = True
         self._last_state = None
+        self._last_render_key = None
         self.update_state(state, document_to_global)
 
     def clear_reference(self):
@@ -95,6 +97,9 @@ class LockedReferenceOverlay(QtWidgets.QWidget):
         self._local_to_document = None
         self._item_to_global = None
         self._last_state = None
+        self._last_render_key = None
+        self._source = QtGui.QPixmap()
+        self._image_to_overlay = None
         self.hide()
         self.update()
 
@@ -103,8 +108,10 @@ class LockedReferenceOverlay(QtWidgets.QWidget):
         if getattr(item, 'grayscale', False):
             source = getattr(item, '_grayscale_pixmap', None)
             if source is not None and not source.isNull():
-                return source.copy()
-        return item.pixmap().copy()
+                return QtGui.QPixmap(source)
+        # QPixmap is implicitly shared: retain a snapshot without a deep
+        # pixel copy. Qt detaches if either owner subsequently modifies it.
+        return QtGui.QPixmap(item.pixmap())
 
     @staticmethod
     def _map_transform(transform, point):
@@ -161,6 +168,15 @@ class LockedReferenceOverlay(QtWidgets.QWidget):
         if geometry.width() <= 0 or geometry.height() <= 0:
             self.hide()
             return
+        render_key = (
+            tuple(canvas_rect),
+            document_to_global.m11(), document_to_global.m12(),
+            document_to_global.m21(), document_to_global.m22(),
+            document_to_global.dx(), document_to_global.dy())
+        if self.isVisible() and render_key == self._last_render_key:
+            # Heartbeats keep the connection alive, but do not require
+            # repainting a canvas-sized translucent window or raising it.
+            return
         if self.geometry() != geometry:
             self.setGeometry(geometry)
 
@@ -176,6 +192,7 @@ class LockedReferenceOverlay(QtWidgets.QWidget):
             to_overlay(QtCore.QPointF(0, 1)))
         self._image_to_overlay = image_to_overlay
         self._last_state = state
+        self._last_render_key = render_key
         if self.isHidden():
             self.show()
         self.raise_()
