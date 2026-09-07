@@ -97,7 +97,7 @@ class CloudflareTunnel:
         flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
         self.process = subprocess.Popen(
             [executable, 'tunnel', '--url', f'http://127.0.0.1:{port}',
-             '--no-autoupdate'], stdout=subprocess.PIPE,
+             '--protocol', 'http2', '--no-autoupdate'], stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True, encoding='utf-8',
             errors='replace', creationflags=flags)
         lines = queue.Queue()
@@ -272,12 +272,16 @@ class PhoneReceiver(QtCore.QObject):
         self.port = self.server.server_port
         self.url = f'http://{host}:{self.port}/{self.token}'
         if cloudflare:
-            try:
-                self.tunnel = tunnel_factory(self.port)
-                self.url = f'{self.tunnel.origin}/{self.token}'
-            except Exception:
+            for _ in range(2):
+                try:
+                    self.tunnel = tunnel_factory(self.port)
+                    break
+                except OSError:
+                    continue
+            if self.tunnel is None:
                 self.stop()
-                raise
+                raise OSError('Cloudflare could not create a link after two attempts')
+            self.url = f'{self.tunnel.origin}/{self.token}'
 
     def stop(self):
         if self.tunnel is not None:

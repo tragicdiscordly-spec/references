@@ -68,6 +68,29 @@ def test_phone_endpoint_requires_pairing_and_valid_image(qapp, qtbot):
     assert not receiver.thread.is_alive()
 
 
+def test_cloudflare_start_retries_once(qapp):
+    attempts = []
+    class Tunnel:
+        origin = 'https://retry-worked.trycloudflare.com'
+        stopped = False
+        def stop(self):
+            self.stopped = True
+    tunnel = Tunnel()
+    def factory(port):
+        attempts.append(port)
+        if len(attempts) == 1:
+            raise OSError('temporary failure')
+        return tunnel
+    receiver = PhoneReceiver(bind='127.0.0.1', cloudflare=True,
+                             tunnel_factory=factory)
+    try:
+        assert len(attempts) == 2
+        assert receiver.url.startswith(tunnel.origin + '/')
+    finally:
+        receiver.stop()
+    assert tunnel.stopped
+
+
 def test_controls_are_children_of_protected_window(main_window):
     view = main_window.view
     view.on_context_menu(QtCore.QPoint(40, 40))
