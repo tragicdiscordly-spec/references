@@ -1,14 +1,37 @@
 """Explicitly started LAN-only image inbox; no cloud or disk uploads."""
 import hmac
 import secrets
-import socket
 import threading
+import ipaddress
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from PyQt6 import QtCore, QtGui
+from PyQt6.QtNetwork import QNetworkInterface
 
 MAX_UPLOAD = 20 * 1024 * 1024
 MAX_PIXELS = 40_000_000
+
+
+def lan_address(interfaces=None):
+    """Prefer a connected LAN adapter, never a tunnel's hostname address."""
+    interfaces = QNetworkInterface.allInterfaces() if interfaces is None else interfaces
+    for interface in interfaces:
+        if interface.type() not in (QNetworkInterface.InterfaceType.Ethernet,
+                                    QNetworkInterface.InterfaceType.Wifi):
+            continue
+        flags = interface.flags()
+        if not (flags & QNetworkInterface.InterfaceFlag.IsUp
+                and flags & QNetworkInterface.InterfaceFlag.IsRunning):
+            continue
+        for entry in interface.addressEntries():
+            try:
+                address = ipaddress.ip_address(entry.ip().toString())
+            except ValueError:
+                continue
+            if (address.version == 4 and not address.is_loopback
+                    and not address.is_link_local and not address.is_unspecified):
+                return str(address)
+    raise OSError('No connected Ethernet or Wi-Fi address found')
 
 
 def decode_image(data):
@@ -97,9 +120,7 @@ class PhoneReceiver(QtCore.QObject):
                 receiver.image_received.emit(image)
                 self.reply(202, 'Sent to References. Check the reference on your PC.')
 
-        addresses = socket.gethostbyname_ex(socket.gethostname())[2]
-        host = next((ip for ip in addresses if ip.startswith(('192.168.', '10.'))),
-                    next((ip for ip in addresses if not ip.startswith('127.')), '127.0.0.1'))
+        host = lan_address() if bind == '0.0.0.0' else bind
         self.server = HTTPServer((bind, 0), Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()

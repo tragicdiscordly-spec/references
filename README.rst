@@ -39,6 +39,9 @@ Uploads stay in memory on your PC; no cloud service is used. The link contains
 a secret token: keep it private and use a trusted home network. If Windows
 asks about Python network access, allow it on your private network only.
 Guest Wi-Fi/client isolation can prevent the phone from reaching the PC.
+The pairing link uses a connected Ethernet/Wi-Fi adapter instead of a VPN
+tunnel address. WireGuard's "Block untunneled traffic" can still block LAN
+connections; References does not change VPN routes or kill-switch settings.
 The limit is 20 MB and 40 megapixels; JPEG, PNG and WebP are supported by the
 installed image readers. Convert HEIC to JPEG if your phone's file is rejected.
 Stop receiving from the pairing panel when finished. Restarting the receiver

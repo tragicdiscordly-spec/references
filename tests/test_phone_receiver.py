@@ -2,7 +2,8 @@ import http.client
 import pytest
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets
-from beeref.phone_receiver import PhoneReceiver, MAX_UPLOAD
+from beeref.phone_receiver import PhoneReceiver, MAX_UPLOAD, lan_address
+from PyQt6.QtNetwork import QNetworkInterface
 from beeref.items import BeePixmapItem
 
 
@@ -14,6 +15,24 @@ def image_bytes():
     buffer.open(QtCore.QIODevice.OpenModeFlag.WriteOnly)
     image.save(buffer, 'PNG')
     return bytes(data)
+
+
+def test_pairing_link_uses_lan_instead_of_wireguard_address():
+    from types import SimpleNamespace
+    flags = QNetworkInterface.InterfaceFlag
+    kinds = QNetworkInterface.InterfaceType
+    def interface(kind, address, connected=True):
+        return SimpleNamespace(type=lambda: kind,
+            flags=lambda: (flags.IsUp | flags.IsRunning) if connected else flags.CanBroadcast,
+            addressEntries=lambda: [SimpleNamespace(ip=lambda: SimpleNamespace(toString=lambda: address))])
+    assert lan_address([
+        interface(kinds.Unknown, '10.5.0.2'),
+        interface(kinds.Wifi, '192.168.2.10', False),
+        interface(kinds.Ethernet, '169.254.1.2'),
+        interface(kinds.Ethernet, '192.168.1.17')]) == '192.168.1.17'
+    assert lan_address([interface(kinds.Ethernet, '10.0.0.15')]) == '10.0.0.15'
+    with pytest.raises(OSError):
+        lan_address([interface(kinds.Unknown, '10.5.0.2')])
 
 
 def test_phone_endpoint_requires_pairing_and_valid_image(qapp, qtbot):
