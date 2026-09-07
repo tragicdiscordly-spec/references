@@ -14,8 +14,10 @@
 # along with BeeRef.  If not, see <https://www.gnu.org/licenses/>.
 
 import base64
+import errno
 import logging
 import pathlib
+import stat
 from xml.etree import ElementTree as ET
 
 from PyQt6 import QtCore, QtGui
@@ -302,6 +304,23 @@ class ImagesToDirectoryExporter(ExporterBase):
         self.emit_begin_processing(worker, self.num_total)
         self.emit_progress(worker, self.start_from)
 
+        # Windows can still report a successful write after chmod(path,
+        # S_IREAD) when the current account has broader ACL permissions.
+        # Respect the read-only bit explicitly so the exporter behaves
+        # consistently across platforms and fails before partially exporting
+        # a scene.
+        try:
+            dirname_mode = pathlib.Path(self.dirname).stat().st_mode
+            if not dirname_mode & stat.S_IWRITE:
+                self.handle_export_error(
+                    self.dirname,
+                    PermissionError(errno.EACCES, 'Directory is read-only'),
+                    worker)
+                return
+        except OSError as e:
+            self.handle_export_error(self.dirname, e, worker)
+            return
+
         for i, item in enumerate(
                 self.items[self.start_from:], start=self.start_from):
             if worker and worker.canceled:
@@ -344,6 +363,20 @@ class ImagesToDirectoryExporter(ExporterBase):
                         logger.debug('Overwrite file')
                     elif self.handle_existing == 'overwrite_all':
                         logger.debug('Overwrite file')
+
+            if path_exists:
+                try:
+                    file_mode = path.stat().st_mode
+                    if not file_mode & stat.S_IWRITE:
+                        self.handle_export_error(
+                            path,
+                            PermissionError(errno.EACCES,
+                                            'File is read-only'),
+                            worker)
+                        return
+                except OSError as e:
+                    self.handle_export_error(path, e, worker)
+                    return
 
             logger.debug(f'Writing file: {path}')
             try:

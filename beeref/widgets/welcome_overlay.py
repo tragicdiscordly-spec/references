@@ -93,7 +93,9 @@ class WelcomeOverlay(MainControlsMixin, QtWidgets.QWidget):
     def __init__(self, parent):
         super().__init__(parent)
         self.control_target = parent
-        self.setAutoFillBackground(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAutoFillBackground(False)
+        self.setStyleSheet('background: transparent;')
         self.init_main_controls(main_window=parent.parent)
 
         # Recent files
@@ -112,6 +114,8 @@ class WelcomeOverlay(MainControlsMixin, QtWidgets.QWidget):
         self.label = QtWidgets.QLabel(self.txt, self)
         self.label.setAlignment(Qt.AlignmentFlag.AlignVCenter
                                 | Qt.AlignmentFlag.AlignCenter)
+        self.label.setStyleSheet(
+            'color: rgba(255, 255, 255, 220); background: transparent;')
         self.layout = QtWidgets.QHBoxLayout()
         self.layout.addStretch(50)
         self.layout.addWidget(self.label)

@@ -2,7 +2,8 @@ from unittest.mock import patch, MagicMock
 
 from PyQt6 import QtCore
 
-from beeref.__main__ import BeeRefMainWindow, main
+from beeref.__main__ import (
+    BeeRefApplication, BeeRefMainWindow, main)
 from beeref.assets import BeeAssets
 from beeref.view import BeeGraphicsView
 
@@ -27,6 +28,13 @@ def test_beerefapplication_fileopenevent(open_mock, qapp, main_window):
     open_mock.assert_called_once_with('test.bee')
 
 
+def test_beerefapplication_single_instance_state(qapp):
+    # The session fixture owns the mutex on Windows.  This assertion keeps
+    # the guard present without requiring a second QApplication.
+    assert hasattr(qapp, '_already_running')
+    assert isinstance(qapp._already_running, bool)
+
+
 @patch('beeref.__main__.BeeRefApplication')
 @patch('beeref.__main__.CommandlineArgs')
 @patch('beeref.config.BeeSettings.on_startup')
@@ -36,8 +44,15 @@ def test_main(startup_mock, args_mock, app_mock, qapp):
     args_mock.return_value.loglevel = 'WARN'
     args_mock.return_value.debug_raise_error = ''
 
+    # The live BeeRef instance used for manual testing may own the mutex;
+    # this test is exercising main()'s normal path with a mocked constructor.
+    already_running = qapp._already_running
+    qapp._already_running = False
     with patch.object(qapp, 'exec') as exec_mock:
-        main()
+        try:
+            main()
+        finally:
+            qapp._already_running = already_running
         exec_mock.assert_called_once_with()
 
     args_mock.assert_called_once_with(with_check=True)

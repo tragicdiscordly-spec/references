@@ -445,7 +445,7 @@ class BeeGraphicsScene(QtWidgets.QGraphicsScene):
 
         items = super().selectedItems()
         if user_only:
-            return list(filter(lambda i: hasattr(i, 'save_id'), items))
+            return [item for item in items if hasattr(item, 'save_id')]
         return items
 
     def items_by_type(self, itype):
@@ -492,17 +492,16 @@ class BeeGraphicsScene(QtWidgets.QGraphicsScene):
         if not base:
             return QtCore.QRectF(0, 0, 0, 0)
 
-        x = []
-        y = []
-
+        min_x = min_y = float('inf')
+        max_x = max_y = float('-inf')
         for item in base:
             for corner in item.corners_scene_coords:
-                x.append(corner.x())
-                y.append(corner.y())
+                min_x = min(min_x, corner.x())
+                min_y = min(min_y, corner.y())
+                max_x = max(max_x, corner.x())
+                max_y = max(max_y, corner.y())
 
-        return QtCore.QRectF(
-            QtCore.QPointF(min(x), min(y)),
-            QtCore.QPointF(max(x), max(y)))
+        return QtCore.QRectF(min_x, min_y, max_x - min_x, max_y - min_y)
 
     def get_selection_center(self):
         rect = self.itemsBoundingRect(selection_only=True)

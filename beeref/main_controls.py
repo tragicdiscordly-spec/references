@@ -14,6 +14,7 @@
 # along with BeeRef.  If not, see <https://www.gnu.org/licenses/>.
 
 import logging
+import os
 
 from PyQt6 import QtCore, QtGui
 from PyQt6.QtCore import Qt
@@ -99,7 +100,8 @@ class MainControlsMixin:
                 path = mimedata.urls()[0]
                 if (path.isLocalFile()
                         and fileio.is_bee_file(path.toLocalFile())):
-                    self.control_target.open_from_file(path.toLocalFile())
+                    self.control_target.open_from_file(
+                        os.path.normpath(path.toLocalFile()))
                     return
             self.control_target.do_insert_images(mimedata.urls(), pos)
         elif mimedata.hasImage():

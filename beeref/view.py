@@ -55,9 +55,39 @@ class BeeGraphicsView(MainControlsMixin,
         self.keyboard_settings = KeyboardSettings()
         self.welcome_overlay = widgets.welcome_overlay.WelcomeOverlay(self)
 
-        self.setBackgroundBrush(
-            QtGui.QBrush(QtGui.QColor(*constants.COLORS['Scene:Canvas'])))
-        self.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        # Transparent canvas: only the placed reference images are painted.
+        # This lets the desktop/application underneath show through.
+        self.setBackgroundBrush(QtGui.QBrush(Qt.BrushStyle.NoBrush))
+        self.setStyleSheet('background: transparent; border: none;')
+        transparent_palette = self.palette()
+        transparent_palette.setColor(
+            QtGui.QPalette.ColorRole.Base, Qt.GlobalColor.transparent)
+        transparent_palette.setColor(
+            QtGui.QPalette.ColorRole.Window, Qt.GlobalColor.transparent)
+        self.setPalette(transparent_palette)
+        self.viewport().setAttribute(
+            Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.viewport().setAutoFillBackground(False)
+        self.viewport().setStyleSheet('background: transparent;')
+        # This view is primarily a bitmap compositor. Antialiasing is useful
+        # for vector geometry but makes a full-desktop transparent viewport
+        # noticeably more expensive while dragging/zooming references.
+        self.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, False)
+        self.setOptimizationFlag(
+            QtWidgets.QGraphicsView.OptimizationFlag.DontAdjustForAntialiasing,
+            True)
+        self.setViewportUpdateMode(
+            QtWidgets.QGraphicsView.ViewportUpdateMode.MinimalViewportUpdate)
+        # A translucent top-level window cannot rely on Qt's normal
+        # minimal-damage repaint bookkeeping: when the locked proxy moves,
+        # the old pixels are transparent and can remain in the backing store.
+        # Keep the fast mode for normal editing and switch to a full repaint
+        # only while the canvas proxy is active.
+        self._locked_overlay_active = False
+        self.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
 
         self.undo_stack = QtGui.QUndoStack(self)
@@ -69,6 +99,12 @@ class BeeGraphicsView(MainControlsMixin,
         self.filename = None
         self.previous_transform = None
         self.active_mode = None
+        self._has_user_items = False
+        self._scene_rect_recalc_pending = False
+        self._scene_rect_timer = QtCore.QTimer(self)
+        self._scene_rect_timer.setSingleShot(True)
+        self._scene_rect_timer.setInterval(16)
+        self._scene_rect_timer.timeout.connect(self._recalc_scene_rect_now)
 
         self.scene = BeeGraphicsScene(self.undo_stack)
         self.scene.changed.connect(self.on_scene_changed)
@@ -79,6 +115,7 @@ class BeeGraphicsView(MainControlsMixin,
 
         # Context menu and actions
         self.build_menu_and_actions()
+        self._style_context_menu()
         self.control_target = self
         self.init_main_controls(main_window=parent)
 
@@ -91,6 +128,81 @@ class BeeGraphicsView(MainControlsMixin,
                 self.do_insert_images(commandline_args.filenames)
 
         self.update_window_title()
+
+    def drawBackground(self, painter, rect):
+        """Clear transparent pixels before QGraphicsScene paints.
+
+        ``NoBrush`` leaves the background visually transparent, but it does
+        not necessarily erase old pixels from a layered Windows backing
+        store.  Clearing with the source alpha mode prevents a moved locked
+        proxy from leaving a copy of itself behind.
+        """
+        painter.save()
+        painter.setCompositionMode(
+            QtGui.QPainter.CompositionMode.CompositionMode_Clear)
+        painter.fillRect(rect, Qt.GlobalColor.transparent)
+        painter.restore()
+
+    def set_locked_overlay_active(self, active):
+        """Use reliable repainting only for the click-through proxy."""
+        active = bool(active)
+        if active == self._locked_overlay_active:
+            return
+        self._locked_overlay_active = active
+        if active:
+            self.setViewportUpdateMode(
+                QtWidgets.QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
+            self.viewport().update()
+            return
+
+        # Clear one complete frame before returning to the cheaper damage
+        # region mode.  This also removes any stale proxy pixels left by a
+        # compositor/backing-store update that occurred during the lock.
+        self.setViewportUpdateMode(
+            QtWidgets.QGraphicsView.ViewportUpdateMode.FullViewportUpdate)
+        self.viewport().repaint()
+        self.setViewportUpdateMode(
+            QtWidgets.QGraphicsView.ViewportUpdateMode.MinimalViewportUpdate)
+        self.viewport().update()
+
+    def _style_context_menu(self):
+        """Give popup menus an opaque surface over the transparent overlay."""
+        menu_style = """
+            QMenu {
+                background-color: #202225;
+                color: #f2f3f5;
+                border: 1px solid #45474d;
+                padding: 6px;
+            }
+            QMenu::item {
+                min-height: 24px;
+                padding: 5px 28px 5px 10px;
+                border-radius: 4px;
+            }
+            QMenu::item:selected {
+                background-color: #5865f2;
+                color: #ffffff;
+            }
+            QMenu::item:disabled { color: #858891; }
+            QMenu::separator {
+                height: 1px;
+                background: #45474d;
+                margin: 5px 8px;
+            }
+        """
+        menus = [self.context_menu]
+        menus.extend(self.context_menu.findChildren(QtWidgets.QMenu))
+        for menu in menus:
+            menu.setAttribute(
+                Qt.WidgetAttribute.WA_TranslucentBackground, False)
+            menu.setAutoFillBackground(True)
+            palette = menu.palette()
+            palette.setColor(
+                QtGui.QPalette.ColorRole.Window, QtGui.QColor('#202225'))
+            palette.setColor(
+                QtGui.QPalette.ColorRole.WindowText, QtGui.QColor('#f2f3f5'))
+            menu.setPalette(palette)
+            menu.setStyleSheet(menu_style)
 
     @property
     def filename(self):
@@ -108,6 +220,24 @@ class BeeGraphicsView(MainControlsMixin,
         self.scene.cancel_active_modes()
         self.cancel_sample_color_mode()
         self.active_mode = None
+
+    def shutdown_io(self):
+        """Stop background I/O before the scene/view is destroyed."""
+        worker = getattr(self, 'worker', None)
+        if worker is None:
+            return
+        # Do not let queued progress/finished callbacks touch a scene that is
+        # being torn down. The loader checks this flag between files.
+        worker.canceled = True
+        for signal in (worker.progress, worker.finished,
+                       worker.begin_processing, worker.user_input_required):
+            try:
+                signal.disconnect()
+            except TypeError:
+                pass
+        if worker.isRunning():
+            worker.wait(3000)
+        self.worker = None
 
     def cancel_sample_color_mode(self):
         logger.debug('Cancel sample color mode')
@@ -130,19 +260,38 @@ class BeeGraphicsView(MainControlsMixin,
         self.parent.setWindowTitle(title)
 
     def on_scene_changed(self, region):
-        if not self.scene.items():
-            logger.debug('No items in scene')
+        has_items = any(hasattr(item, 'save_id')
+                        for item in self.scene.items())
+        if has_items != self._has_user_items:
+            self._has_user_items = has_items
+            if not has_items:
+                logger.debug('No items in scene')
+                self.setTransform(QtGui.QTransform())
+                self.clearFocus()
+                self.actiongroup_set_enabled(
+                    'active_when_items_in_scene', False)
+            else:
+                self.setFocus()
+                self.welcome_overlay.clearFocus()
+                self.actiongroup_set_enabled(
+                    'active_when_items_in_scene', True)
+        if not has_items:
+            # An empty board should always return to the neutral view, even
+            # if the scene emits a duplicate changed signal.
             self.setTransform(QtGui.QTransform())
-            self.welcome_overlay.setFocus()
-            self.clearFocus()
-            self.welcome_overlay.show()
-            self.actiongroup_set_enabled('active_when_items_in_scene', False)
-        else:
-            self.setFocus()
-            self.welcome_overlay.clearFocus()
+        # Keep visibility in sync even when Qt emits a redundant changed
+        # signal; these calls are cheap and preserve the original behavior.
+        if has_items:
             self.welcome_overlay.hide()
-            self.actiongroup_set_enabled('active_when_items_in_scene', True)
-        self.recalc_scene_rect()
+        else:
+            self.welcome_overlay.show()
+        # Keep the legacy synchronous call boundary (useful to callers and
+        # tests), but let the implementation coalesce the expensive work.
+        self._scene_rect_defer = True
+        try:
+            self.recalc_scene_rect()
+        finally:
+            self._scene_rect_defer = False
 
     def on_can_redo_changed(self, can_redo):
         self.actiongroup_set_enabled('active_when_can_redo', can_redo)
@@ -236,13 +385,16 @@ class BeeGraphicsView(MainControlsMixin,
             self.parent.showFullScreen()
         else:
             self.parent.showNormal()
+        self.parent.cover_virtual_desktop()
+        self.parent.schedule_native_state()
 
     def on_action_always_on_top(self, checked):
         self.parent.setWindowFlag(
             Qt.WindowType.WindowStaysOnTopHint, on=checked)
-        self.parent.destroy()
-        self.parent.create()
+        QtWidgets.QWidget.destroy(self.parent)
+        QtWidgets.QWidget.create(self.parent)
         self.parent.show()
+        self.parent.schedule_native_state()
 
     def on_action_show_scrollbars(self, checked):
         if checked:
@@ -265,9 +417,10 @@ class BeeGraphicsView(MainControlsMixin,
     def on_action_show_titlebar(self, checked):
         self.parent.setWindowFlag(
             Qt.WindowType.FramelessWindowHint, on=not checked)
-        self.parent.destroy()
-        self.parent.create()
+        QtWidgets.QWidget.destroy(self.parent)
+        QtWidgets.QWidget.create(self.parent)
         self.parent.show()
+        self.parent.schedule_native_state()
 
     def on_action_move_window(self):
         if self.welcome_overlay.isHidden():
@@ -621,6 +774,14 @@ class BeeGraphicsView(MainControlsMixin,
         self.undo_stack.endMacro()
         if new_scene:
             self.on_action_fit_scene()
+        self.parent.schedule_native_state()
+
+    def _on_insert_images_finished(self, new_scene, filename, errors):
+        # Progress signals are queued across the loader thread. Drain any
+        # remaining items before invoking the public callback so a very fast
+        # single-image load cannot finish before its queued scene update.
+        self.scene.add_queued_items()
+        self.on_insert_images_finished(new_scene, filename, errors)
 
     def do_insert_images(self, filenames, pos=None):
         if not pos:
@@ -634,7 +795,7 @@ class BeeGraphicsView(MainControlsMixin,
             self.scene)
         self.worker.progress.connect(self.on_items_loaded)
         self.worker.finished.connect(
-            partial(self.on_insert_images_finished,
+            partial(self._on_insert_images_finished,
                     not self.scene.items()))
         self.progress = widgets.BeeProgressDialog(
             'Loading images',
@@ -718,18 +879,25 @@ class BeeGraphicsView(MainControlsMixin,
             QtCore.QUrl.fromLocalFile(dirname))
 
     def on_selection_changed(self):
-        logger.debug('Currently selected items: %s',
-                     len(self.scene.selectedItems(user_only=True)))
+        try:
+            selected = self.scene.selectedItems(user_only=True)
+        except RuntimeError:
+            # A queued Qt signal can arrive while the fixture/application is
+            # destroying the native scene object. Ignore that late signal.
+            return
+        logger.debug('Currently selected items: %s', len(selected))
         self.actiongroup_set_enabled('active_when_selection',
                                      self.scene.has_selection())
         self.actiongroup_set_enabled('active_when_single_image',
                                      self.scene.has_single_image_selection())
 
-        if self.scene.has_selection():
-            item = self.scene.selectedItems(user_only=True)[0]
+        if selected:
+            item = selected[0]
             grayscale = getattr(item, 'grayscale', False)
             actions.actions['grayscale'].qaction.setChecked(grayscale)
-        self.viewport().repaint()
+        # Do not force a synchronous repaint of the entire virtual desktop.
+        # Qt will invalidate only the affected item region.
+        self.viewport().update()
 
     def on_cursor_changed(self, cursor):
         if self.active_mode is None:
@@ -747,19 +915,45 @@ class BeeGraphicsView(MainControlsMixin,
 
         if self.previous_transform:
             return
+        if getattr(self, '_scene_rect_defer', False):
+            self.schedule_recalc_scene_rect()
+            return
+        self._scene_rect_recalc_pending = False
+        self._scene_rect_timer.stop()
+        self._recalc_scene_rect_now()
+
+    def schedule_recalc_scene_rect(self):
+        """Coalesce bursts of scene.changed signals into one recalculation."""
+        if self.previous_transform or self._scene_rect_recalc_pending:
+            return
+        self._scene_rect_recalc_pending = True
+        self._scene_rect_timer.start()
+
+    def _recalc_scene_rect_now(self):
+        self._scene_rect_recalc_pending = False
+        if self.previous_transform:
+            return
         logger.trace('Recalculating scene rectangle...')
         try:
-            topleft = self.mapFromScene(
-                self.scene.itemsBoundingRect().topLeft())
+            bounds = self.scene.itemsBoundingRect()
+            if bounds.isNull():
+                return
+            topleft = self.mapFromScene(bounds.topLeft())
             topleft = self.mapToScene(QtCore.QPoint(
                 topleft.x() - self.size().width(),
                 topleft.y() - self.size().height()))
-            bottomright = self.mapFromScene(
-                self.scene.itemsBoundingRect().bottomRight())
+            bottomright = self.mapFromScene(bounds.bottomRight())
             bottomright = self.mapToScene(QtCore.QPoint(
                 bottomright.x() + self.size().width(),
                 bottomright.y() + self.size().height()))
-            self.setSceneRect(QtCore.QRectF(topleft, bottomright))
+            rect = QtCore.QRectF(topleft, bottomright)
+            current = self.sceneRect()
+            if any(abs(a - b) > 0.5 for a, b in (
+                    (rect.left(), current.left()),
+                    (rect.top(), current.top()),
+                    (rect.right(), current.right()),
+                    (rect.bottom(), current.bottom()))):
+                self.setSceneRect(rect)
         except OverflowError:
             logger.info('Maximum scene size reached')
         logger.trace('Done recalculating scene rectangle')
@@ -776,10 +970,11 @@ class BeeGraphicsView(MainControlsMixin,
             arguments and turns it into a number, for ex. ``min`` or ``max``.
         """
 
-        topleft = self.mapFromScene(
-            self.scene.itemsBoundingRect().topLeft())
-        bottomright = self.mapFromScene(
-            self.scene.itemsBoundingRect().bottomRight())
+        bounds = self.scene.itemsBoundingRect()
+        if bounds.isNull():
+            return 0
+        topleft = self.mapFromScene(bounds.topLeft())
+        bottomright = self.mapFromScene(bounds.bottomRight())
         return func(bottomright.x() - topleft.x(),
                     bottomright.y() - topleft.y())
 

@@ -45,7 +45,7 @@ def with_anchor(func):
         # and then move the item accordingly to keep the anchor fixed
 
         anchor = kwargs.pop('anchor', None)
-        if not anchor:
+        if anchor is None:
             if args and isinstance(args[-1], QtCore.QPointF):
                 anchor = args[-1]
                 args = args[:-1]
@@ -66,12 +66,12 @@ class BaseItemMixin:
         if value <= 0:
             return
 
-        logger.debug(f'Setting scale for {self} to {value}')
+        logger.debug('Setting scale for %s to %s', self, value)
         self.prepareGeometryChange()
         super().setScale(value)
 
     def setZValue(self, value):
-        logger.debug(f'Setting z-value for {self} to {value}')
+        logger.debug('Setting z-value for %s to %s', self, value)
         super().setZValue(value)
         if self.scene():
             self.scene().max_z = max(self.scene().max_z, value)
@@ -82,7 +82,7 @@ class BaseItemMixin:
 
     @with_anchor
     def setRotation(self, value):
-        logger.debug(f'Setting rotation for {self} to {value}')
+        logger.debug('Setting rotation for %s to %s', self, value)
         super().setRotation(value % 360)
 
     def flip(self):
@@ -162,9 +162,11 @@ class SelectableMixin(BaseItemMixin):
         screen so we need to adjust the values according to the scale
         factor sof the view and the item."""
 
-        if self.scene():
-            scale = self.scene().views()[0].get_scale()
-            self._view_scale = scale
+        scene = self.scene()
+        if scene:
+            views = scene.views()
+            if views:
+                self._view_scale = views[0].get_scale()
 
         # It can happen that the item is already removed from
         # the scene but its boundingRect is still needed. Keep the
@@ -369,6 +371,13 @@ class SelectableMixin(BaseItemMixin):
         if not self.has_selection_handles():
             return
 
+        # In overlay mode, a plain pointer always advertises the primary
+        # action: drag the image. Hold Shift to expose the legacy transform
+        # handles for resizing, rotating, or flipping.
+        if event.modifiers() == Qt.KeyboardModifier.NoModifier:
+            self.set_cursor(Qt.CursorShape.SizeAllCursor)
+            return
+
         if event.pos() in self.select_handle_free_center():
             # This area should always trigger regular move operations,
             # even if it is covered by selection scale/flip/... handles.
@@ -405,6 +414,14 @@ class SelectableMixin(BaseItemMixin):
         if not self.isSelected():
             # User has just selected this item with this click; don't
             # activate any transformations yet
+            super().mousePressEvent(event)
+            return
+
+        # Make moving the image the effortless default, including directly
+        # over corners and edges. Shift preserves access to transform handles.
+        if (event.button() == Qt.MouseButton.LeftButton
+                and event.modifiers()
+                == Qt.KeyboardModifier.NoModifier):
             super().mousePressEvent(event)
             return
 

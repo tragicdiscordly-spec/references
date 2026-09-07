@@ -162,7 +162,6 @@ actions = ActionList([
     Action(
         id='insert_text',
         text='&Text',
-        shortcuts=['Ctrl+T'],
         callback='on_action_insert_text',
     ),
     Action(
@@ -403,14 +402,16 @@ actions = ActionList([
         id='show_menubar',
         text='Show &Menu Bar',
         checkable=True,
-        settings='View/show_menubar',
+        checked=False,
+        enabled=False,
         callback='on_action_show_menubar',
     ),
     Action(
         id='show_titlebar',
         text='Show &Title Bar',
         checkable=True,
-        checked=True,
+        checked=False,
+        enabled=False,
         callback='on_action_show_titlebar',
     ),
     Action(
@@ -430,6 +431,8 @@ actions = ActionList([
         id='always_on_top',
         text='&Always On Top',
         checkable=True,
+        checked=False,
+        enabled=False,
         callback='on_action_always_on_top',
     ),
     Action(

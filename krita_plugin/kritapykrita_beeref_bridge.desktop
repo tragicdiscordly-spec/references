@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Service
+ServiceTypes=Krita/PythonPlugin
+X-KDE-Library=beeref_bridge
+Name=BeeRef Zoom Bridge
+Comment=Publishes Krita canvas zoom for BeeRef tracing overlays.
