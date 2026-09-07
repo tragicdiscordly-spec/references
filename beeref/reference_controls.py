@@ -37,7 +37,8 @@ class ReferenceControls(QtWidgets.QFrame):
 
     def open(self, point=None, menu=None):
         self.clear()
-        self.button('Close ×', self.hide)
+        self.button('Quit References ×', self.view.on_action_quit)
+        self.button('Hide menu', self.hide)
         menu = menu or self.view.context_menu
         if menu is not self.view.context_menu:
             self.button('← Back', lambda: self.open())

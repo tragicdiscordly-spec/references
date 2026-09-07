@@ -57,6 +57,21 @@ def test_controls_are_children_of_protected_window(main_window):
     assert panel.window() is main_window
 
 
+@pytest.mark.parametrize('confirmed', [False, True])
+def test_quit_button_uses_app_quit_with_unsaved_changes_check(main_window, qtbot, monkeypatch, confirmed):
+    calls = []
+    view = main_window.view
+    monkeypatch.setattr(view, 'get_confirmation_unsaved_changes', lambda message: confirmed)
+    monkeypatch.setattr(type(view.app), 'quit', staticmethod(lambda: calls.append('quit')))
+    view.on_context_menu(QtCore.QPoint(20, 20))
+    panel = view.reference_controls
+    button = next(panel.layout.itemAt(i).widget() for i in range(panel.layout.count())
+                  if isinstance(panel.layout.itemAt(i).widget(), QtWidgets.QPushButton)
+                  and panel.layout.itemAt(i).widget().text() == 'Quit References ×')
+    qtbot.mouseClick(button, QtCore.Qt.MouseButton.LeftButton)
+    assert calls == (['quit'] if confirmed else [])
+
+
 def test_visible_menu_navigation_lays_out_new_children(main_window, qtbot, monkeypatch):
     from types import SimpleNamespace
     view = main_window.view
