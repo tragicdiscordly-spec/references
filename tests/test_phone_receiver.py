@@ -56,9 +56,9 @@ def test_controls_are_children_of_protected_window(main_window):
     assert panel.window() is main_window
 
 
-def test_editing_background_catches_input_but_locked_background_is_transparent(view):
+def test_empty_background_stays_click_through_in_both_modes(view):
     image = QtGui.QImage(10, 10, QtGui.QImage.Format.Format_ARGB32)
-    for locked, alpha in ((False, 1), (True, 0)):
+    for locked, alpha in ((False, 0), (True, 0)):
         view._locked_overlay_active = locked
         image.fill(QtCore.Qt.GlobalColor.transparent)
         painter = QtGui.QPainter(image)

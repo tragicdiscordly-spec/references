@@ -46,9 +46,9 @@ creates a new link; bookmark it for the current session.
 
 The right-click controls, including the opacity slider, are child widgets of
 the protected overlay rather than separate popup windows. Escape or a click
-outside the panel closes it. While editing, the nearly transparent background
-receives input so drags cannot select the Windows desktop behind it. Ctrl+T
-restores click-through tracing.
+outside the panel on an image closes it. Empty space remains click-through
+so other apps stay accessible even while editing. Ctrl+T also makes the
+reference itself click-through for tracing.
 
 Attribution
 -----------

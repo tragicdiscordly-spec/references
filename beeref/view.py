@@ -143,12 +143,9 @@ class BeeGraphicsView(MainControlsMixin,
         painter.setCompositionMode(
             QtGui.QPainter.CompositionMode.CompositionMode_Clear)
         painter.fillRect(rect, Qt.GlobalColor.transparent)
-        if not self._locked_overlay_active:
-            # Alpha-zero holes in a layered window pass mouse input to the
-            # desktop. One alpha step retains editing input without a visible
-            # panel; locked mode remains fully transparent and click-through.
-            painter.setCompositionMode(QtGui.QPainter.CompositionMode.CompositionMode_Source)
-            painter.fillRect(rect, QtGui.QColor(0, 0, 0, 1))
+        # Empty desktop space must remain alpha-zero even while editing.
+        # Filling the virtual desktop with alpha=1 intercepts all clicks in
+        # other apps. Only the image and embedded controls should receive input.
         painter.restore()
 
     def set_locked_overlay_active(self, active):
