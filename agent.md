@@ -1,5 +1,16 @@
 # BeeRef project guide
 
+## References interface
+
+The private GitHub repository and README present this project as References.
+Keep internal BeeRef module names, settings paths, bridge paths and original
+license notices for compatibility. The compact menu contains File, Edit,
+Images (opacity and grayscale only), and pin controls. PrivatePopupFilter
+applies capture exclusion independently to popup menus, dialogs and tooltips;
+main-window affinity does not cover separate popup HWNDs. Qt file dialogs are
+used so the same protection can be applied. OBS verification is performed by
+the user; do not claim an offscreen test proves the capture output.
+
 ## Confirmed working checkpoint — 2026-09-07
 
 The user manually verified that canvas panning and zooming stay aligned after

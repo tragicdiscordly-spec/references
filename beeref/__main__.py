@@ -79,6 +79,9 @@ if platform.system() == 'Windows':
     kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
     user32.SetWindowDisplayAffinity.argtypes = [wintypes.HWND, wintypes.DWORD]
     user32.SetWindowDisplayAffinity.restype = wintypes.BOOL
+    user32.SetLayeredWindowAttributes.argtypes = [
+        wintypes.HWND, wintypes.DWORD, ctypes.c_ubyte, wintypes.DWORD]
+    user32.SetLayeredWindowAttributes.restype = wintypes.BOOL
     user32.GetWindowDisplayAffinity.argtypes = [
         wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
     user32.GetWindowDisplayAffinity.restype = wintypes.BOOL
@@ -142,10 +145,51 @@ class HotkeyFilter(QtCore.QAbstractNativeEventFilter):
         return self.app.nativeEventFilter(event_type, message)
 
 
+class PrivatePopupFilter(QtCore.QObject):
+    """Protect each popup HWND; affinity on the main window isn't inherited."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self._applying = False
+
+    def eventFilter(self, obj, event):
+        if (not self._applying and platform.system() == 'Windows'
+                and event.type() in (QtCore.QEvent.Type.Show,
+                                     QtCore.QEvent.Type.WinIdChange)
+                and isinstance(obj, QtWidgets.QWidget) and obj.isWindow()
+                and (isinstance(obj, (QtWidgets.QMenu, QtWidgets.QDialog))
+                     or obj.windowType() == QtCore.Qt.WindowType.ToolTip)):
+            self._applying = True
+            try:
+                self.protect(obj)
+            finally:
+                self._applying = False
+        return False
+
+    @staticmethod
+    def protect(widget):
+        if QtGui.QGuiApplication.platformName() == 'offscreen':
+            return
+        hwnd = wintypes.HWND(int(widget.winId()))
+        # Keep menus interactive; only add layered rendering, not input
+        # transparency. Windows display affinity applies to each window.
+        style = get_window_long(hwnd, GWL_EXSTYLE)
+        if not style & WS_EX_LAYERED:
+            set_window_long(hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED)
+            user32.SetLayeredWindowAttributes(hwnd, 0, 255, 0x00000002)
+        if not user32.SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE):
+            logger.warning('Could not exclude popup from capture (error %s)',
+                           ctypes.get_last_error())
+
+
 class BeeRefApplication(QtWidgets.QApplication):
 
     def __init__(self, *args, **kwargs):
+        QtWidgets.QApplication.setAttribute(
+            QtCore.Qt.ApplicationAttribute.AA_DontUseNativeDialogs, True)
         super().__init__(*args, **kwargs)
+        self._private_popup_filter = PrivatePopupFilter(self)
+        self.installEventFilter(self._private_popup_filter)
         self.main_window = None
         self._instance_mutex = None
         self._already_running = False

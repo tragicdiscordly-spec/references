@@ -1,11 +1,53 @@
 from unittest.mock import patch, MagicMock
 
-from PyQt6 import QtCore
+from PyQt6 import QtCore, QtWidgets
 
 from beeref.__main__ import (
-    BeeRefApplication, BeeRefMainWindow, main)
+    BeeRefApplication, BeeRefMainWindow, PrivatePopupFilter, main)
 from beeref.assets import BeeAssets
 from beeref.view import BeeGraphicsView
+
+
+def test_popup_capture_filter_covers_menus_submenus_and_dialogs(qapp):
+    guard = PrivatePopupFilter(qapp)
+    menu = QtWidgets.QMenu()
+    submenu = menu.addMenu('Images')
+    dialog = QtWidgets.QDialog()
+    child = QtWidgets.QLabel('child', dialog)
+    with patch('beeref.__main__.platform.system', return_value='Windows'), \
+            patch.object(guard, 'protect') as protect:
+        for widget in (menu, submenu, dialog):
+            event = QtCore.QEvent(QtCore.QEvent.Type.Show)
+            assert guard.eventFilter(widget, event) is False
+            protect.assert_called_with(widget)
+        assert protect.call_count == 3
+        guard.eventFilter(child, QtCore.QEvent(QtCore.QEvent.Type.Show))
+        guard.eventFilter(menu, QtCore.QEvent(QtCore.QEvent.Type.Paint))
+        assert protect.call_count == 3
+    menu.close()
+    dialog.close()
+
+
+def test_popup_capture_affinity_preserves_input(qapp):
+    widget = MagicMock()
+    widget.winId.return_value = 123
+    with patch('beeref.__main__.QtGui.QGuiApplication.platformName', return_value='windows'), \
+            patch('beeref.__main__.get_window_long', return_value=0, create=True), \
+            patch('beeref.__main__.set_window_long', create=True) as set_style, \
+            patch('beeref.__main__.user32', create=True) as native:
+        PrivatePopupFilter.protect(widget)
+        assert set_style.call_args.args[2] == 0x00080000
+        assert native.SetWindowDisplayAffinity.call_args.args[1] == 0x11
+        native.SetLayeredWindowAttributes.assert_called_once()
+
+
+def test_reference_menu_keeps_only_requested_image_settings(main_window):
+    menu = main_window.view.context_menu
+    submenus = {a.text(): a.menu() for a in menu.actions() if a.menu()}
+    assert set(submenus) == {'&File', '&Edit', '&Images'}
+    from beeref.actions.actions import actions
+    assert submenus['&Images'].actions() == [
+        actions['change_opacity'].qaction, actions['grayscale'].qaction]
 
 
 @patch('PyQt6.QtWidgets.QWidget.show')
