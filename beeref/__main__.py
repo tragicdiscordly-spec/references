@@ -155,10 +155,13 @@ class PrivatePopupFilter(QtCore.QObject):
     def eventFilter(self, obj, event):
         if (not self._applying and platform.system() == 'Windows'
                 and event.type() in (QtCore.QEvent.Type.Show,
+                                     QtCore.QEvent.Type.ShowToParent,
+                                     QtCore.QEvent.Type.Paint,
                                      QtCore.QEvent.Type.WinIdChange)
                 and isinstance(obj, QtWidgets.QWidget) and obj.isWindow()
                 and (isinstance(obj, (QtWidgets.QMenu, QtWidgets.QDialog))
-                     or obj.windowType() == QtCore.Qt.WindowType.ToolTip)):
+                     or obj.windowType() == QtCore.Qt.WindowType.ToolTip
+                     or obj.metaObject().className() in ('QAlphaWidget', 'QRollEffect'))):
             self._applying = True
             try:
                 self.protect(obj)
@@ -171,6 +174,10 @@ class PrivatePopupFilter(QtCore.QObject):
         if QtGui.QGuiApplication.platformName() == 'offscreen':
             return
         hwnd = wintypes.HWND(int(widget.winId()))
+        # Qt can reset native styles while finishing a popup's show. Check
+        # the final HWND before painting, not only before native ShowWindow.
+        if get_display_affinity(widget) == WDA_EXCLUDEFROMCAPTURE:
+            return
         # Keep menus interactive; only add layered rendering, not input
         # transparency. Windows display affinity applies to each window.
         style = get_window_long(hwnd, GWL_EXSTYLE)
@@ -180,6 +187,8 @@ class PrivatePopupFilter(QtCore.QObject):
         if not user32.SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE):
             logger.warning('Could not exclude popup from capture (error %s)',
                            ctypes.get_last_error())
+        elif get_display_affinity(widget) != WDA_EXCLUDEFROMCAPTURE:
+            logger.warning('Popup capture exclusion was not retained')
 
 
 class BeeRefApplication(QtWidgets.QApplication):
@@ -189,6 +198,12 @@ class BeeRefApplication(QtWidgets.QApplication):
             QtCore.Qt.ApplicationAttribute.AA_DontUseNativeDialogs, True)
         super().__init__(*args, **kwargs)
         self._private_popup_filter = PrivatePopupFilter(self)
+        # Animated menus can paint through a separate temporary HWND.
+        for effect in (QtCore.Qt.UIEffect.UI_AnimateMenu,
+                       QtCore.Qt.UIEffect.UI_FadeMenu,
+                       QtCore.Qt.UIEffect.UI_AnimateTooltip,
+                       QtCore.Qt.UIEffect.UI_FadeTooltip):
+            self.setEffectEnabled(effect, False)
         self.installEventFilter(self._private_popup_filter)
         self.main_window = None
         self._instance_mutex = None
@@ -386,6 +401,8 @@ class BeeRefMainWindow(QtWidgets.QMainWindow):
     def _create_tray_icon(self, app):
         self.tray_icon = QtWidgets.QSystemTrayIcon(self.windowIcon(), app)
         menu = QtWidgets.QMenu()
+        menu.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        menu.setWindowFlag(QtCore.Qt.WindowType.NoDropShadowWindowHint, True)
         self.tray_lock_action = menu.addAction(
             'Pin to Krita / Clip Studio (Ctrl+T)')
         self.tray_lock_action.triggered.connect(self.handle_ctrl_t)

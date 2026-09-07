@@ -22,8 +22,10 @@ def test_popup_capture_filter_covers_menus_submenus_and_dialogs(qapp):
             protect.assert_called_with(widget)
         assert protect.call_count == 3
         guard.eventFilter(child, QtCore.QEvent(QtCore.QEvent.Type.Show))
-        guard.eventFilter(menu, QtCore.QEvent(QtCore.QEvent.Type.Paint))
         assert protect.call_count == 3
+        guard.eventFilter(menu, QtCore.QEvent(QtCore.QEvent.Type.Paint))
+        guard.eventFilter(menu, QtCore.QEvent(QtCore.QEvent.Type.ShowToParent))
+        assert protect.call_count == 5
     menu.close()
     dialog.close()
 
@@ -32,6 +34,7 @@ def test_popup_capture_affinity_preserves_input(qapp):
     widget = MagicMock()
     widget.winId.return_value = 123
     with patch('beeref.__main__.QtGui.QGuiApplication.platformName', return_value='windows'), \
+            patch('beeref.__main__.get_display_affinity', return_value=0), \
             patch('beeref.__main__.get_window_long', return_value=0, create=True), \
             patch('beeref.__main__.set_window_long', create=True) as set_style, \
             patch('beeref.__main__.user32', create=True) as native:
@@ -39,6 +42,19 @@ def test_popup_capture_affinity_preserves_input(qapp):
         assert set_style.call_args.args[2] == 0x00080000
         assert native.SetWindowDisplayAffinity.call_args.args[1] == 0x11
         native.SetLayeredWindowAttributes.assert_called_once()
+
+
+def test_popup_reprotects_after_qt_resets_affinity(qapp):
+    widget = MagicMock()
+    widget.winId.return_value = 123
+    with patch('beeref.__main__.QtGui.QGuiApplication.platformName', return_value='windows'), \
+            patch('beeref.__main__.get_display_affinity', side_effect=[0x11, 0, 0x11]), \
+            patch('beeref.__main__.get_window_long', return_value=0x80000, create=True), \
+            patch('beeref.__main__.user32', create=True) as native:
+        PrivatePopupFilter.protect(widget)
+        native.SetWindowDisplayAffinity.assert_not_called()
+        PrivatePopupFilter.protect(widget)
+        native.SetWindowDisplayAffinity.assert_called_once()
 
 
 def test_reference_menu_keeps_only_requested_image_settings(main_window):

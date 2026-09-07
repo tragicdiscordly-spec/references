@@ -194,7 +194,8 @@ class BeeGraphicsView(MainControlsMixin,
         menus.extend(self.context_menu.findChildren(QtWidgets.QMenu))
         for menu in menus:
             menu.setAttribute(
-                Qt.WidgetAttribute.WA_TranslucentBackground, False)
+                Qt.WidgetAttribute.WA_TranslucentBackground, True)
+            menu.setWindowFlag(Qt.WindowType.NoDropShadowWindowHint, True)
             menu.setAutoFillBackground(True)
             palette = menu.palette()
             palette.setColor(
