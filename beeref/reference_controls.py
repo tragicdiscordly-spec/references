@@ -21,6 +21,7 @@ class ReferenceControls(QtWidgets.QFrame):
         self.hide()
 
     def clear(self):
+        self.hide()
         while self.layout.count():
             widget = self.layout.takeAt(0).widget()
             if widget:
@@ -59,6 +60,14 @@ class ReferenceControls(QtWidgets.QFrame):
         self.present(point)
 
     def present(self, point=None):
+        # Widgets added while a panel is visible start hidden. Measuring
+        # before revealing them collapses the layout to its margins (a line).
+        for i in range(self.layout.count()):
+            widget = self.layout.itemAt(i).widget()
+            if widget is not None:
+                widget.show()
+        self.layout.invalidate()
+        self.layout.activate()
         self.adjustSize()
         point = self.pos() if point is None else point
         bounds = self.parentWidget().rect()

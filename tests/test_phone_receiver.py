@@ -1,6 +1,7 @@
 import http.client
 import pytest
 from PyQt6 import QtCore, QtGui
+from PyQt6 import QtWidgets
 from beeref.phone_receiver import PhoneReceiver, MAX_UPLOAD
 from beeref.items import BeePixmapItem
 
@@ -54,6 +55,46 @@ def test_controls_are_children_of_protected_window(main_window):
     assert main_window.tray_lock_action.parent() is main_window
     panel.open(menu=view.context_menu.actions()[0].menu())
     assert panel.window() is main_window
+
+
+def test_visible_menu_navigation_lays_out_new_children(main_window, qtbot, monkeypatch):
+    from types import SimpleNamespace
+    view = main_window.view
+    image = QtGui.QImage(20, 20, QtGui.QImage.Format.Format_ARGB32)
+    item = BeePixmapItem(image)
+    view.scene.addItem(item)
+    item.setSelected(True)
+    panel = view.reference_controls
+    monkeypatch.setattr(main_window, 'start_phone_receiver',
+                        lambda: SimpleNamespace(url='http://127.0.0.1:1234/test'))
+    view.on_context_menu(QtCore.QPoint(20, 20))
+
+    def click(text):
+        button = next(panel.layout.itemAt(i).widget()
+                      for i in range(panel.layout.count())
+                      if isinstance(panel.layout.itemAt(i).widget(), QtWidgets.QPushButton)
+                      and text in panel.layout.itemAt(i).widget().text())
+        qtbot.mouseClick(button, QtCore.Qt.MouseButton.LeftButton)
+        QtWidgets.QApplication.processEvents()
+
+    def check_page():
+        assert panel.height() > 80
+        for i in range(panel.layout.count()):
+            widget = panel.layout.itemAt(i).widget()
+            assert widget.isVisible()
+            assert widget.height() >= widget.minimumSizeHint().height()
+            assert panel.rect().contains(widget.geometry())
+
+    for _ in range(2):
+        click('Images')
+        check_page()
+        click('Opacity')
+        check_page()
+        click('Back')
+        click('Send image from phone')
+        check_page()
+        assert panel.findChild(QtWidgets.QLineEdit).text().endswith('/test')
+        click('Back')
 
 
 def test_empty_background_stays_click_through_in_both_modes(view):
