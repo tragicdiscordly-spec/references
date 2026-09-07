@@ -2,6 +2,16 @@
 
 ## References interface
 
+Native popup capture exclusion did not work in the user's OBS setup. The
+right-click and tray controls now use ReferenceControls, a child QFrame of the
+protected view viewport; never replace it with a top-level Popup/QMenu. The
+opacity editor is embedded too. Editing background alpha is 1/255 to prevent
+transparent holes from forwarding drags to Windows desktop selection; locked
+background alpha stays zero. PhoneReceiver is started explicitly by the pairing
+panel, accepts token-authenticated LAN uploads, and passes decoded QImages to
+the GUI thread. ReplaceReference preserves the document anchor and supports
+Undo. Keep pairing tokens/image data out of logs and GitHub.
+
 The private GitHub repository and README present this project as References.
 Keep internal BeeRef module names, settings paths, bridge paths and original
 license notices for compatibility. The compact menu contains File, Edit,

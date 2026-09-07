@@ -1026,9 +1026,7 @@ def test_on_action_arrange_square(arrange_mock, view):
     arrange_mock.assert_called_once_with()
 
 
-@patch('beeref.widgets.ChangeOpacityDialog.__init__',
-       return_value=None)
-def test_on_action_change_opacity(dialog_mock, view):
+def test_on_action_change_opacity(view):
     pixmapitem1 = BeePixmapItem(QtGui.QImage())
     view.scene.addItem(pixmapitem1)
     pixmapitem1.setSelected(True)
@@ -1042,7 +1040,14 @@ def test_on_action_change_opacity(dialog_mock, view):
     textitem.setSelected(True)
 
     view.on_action_change_opacity()
-    dialog_mock.assert_called_once_with(view, [pixmapitem1], view.undo_stack)
+    controls = view.reference_controls
+    assert not controls.isWindow()
+    assert controls.isVisible()
+    controls.apply_opacity([pixmapitem1], 35)
+    assert pixmapitem1.opacity() == .35
+    assert pixmapitem2.opacity() == 1
+    view.undo_stack.undo()
+    assert pixmapitem1.opacity() == 1
 
 
 def test_on_action_grayscale(view):

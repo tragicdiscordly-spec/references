@@ -400,18 +400,57 @@ class BeeRefMainWindow(QtWidgets.QMainWindow):
 
     def _create_tray_icon(self, app):
         self.tray_icon = QtWidgets.QSystemTrayIcon(self.windowIcon(), app)
-        menu = QtWidgets.QMenu()
-        menu.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        menu.setWindowFlag(QtCore.Qt.WindowType.NoDropShadowWindowHint, True)
-        self.tray_lock_action = menu.addAction(
-            'Pin to Krita / Clip Studio (Ctrl+T)')
+        self.tray_lock_action = QtGui.QAction(
+            'Pin to Krita / Clip Studio (Ctrl+T)', self)
         self.tray_lock_action.triggered.connect(self.handle_ctrl_t)
-        menu.addSeparator()
-        quit_action = menu.addAction('Quit BeeRef')
-        quit_action.triggered.connect(app.quit)
-        self.tray_icon.setContextMenu(menu)
+        # A native tray QMenu is another capturable popup. Show our child
+        # controls on either left or right click instead.
+        self.tray_icon.activated.connect(self._show_reference_controls)
         self.tray_icon.setToolTip('BeeRef overlay: editable')
         self.tray_icon.show()
+
+    def _show_reference_controls(self, reason):
+        if reason not in (QtWidgets.QSystemTrayIcon.ActivationReason.Trigger,
+                          QtWidgets.QSystemTrayIcon.ActivationReason.Context):
+            return
+        if self._mouse_passthrough:
+            self._set_mouse_passthrough(False)
+            self._update_lock_feedback()
+        self.view.reference_controls.open(
+            self.view.viewport().mapFromGlobal(QtGui.QCursor.pos()))
+
+    def start_phone_receiver(self):
+        if getattr(self, '_phone_receiver', None) is None:
+            from beeref.phone_receiver import PhoneReceiver
+            self._phone_receiver = PhoneReceiver(self)
+            self._phone_receiver.image_received.connect(self._receive_phone_image)
+        return self._phone_receiver
+
+    def stop_phone_receiver(self):
+        if getattr(self, '_phone_receiver', None) is not None:
+            self._phone_receiver.stop()
+            self._phone_receiver.deleteLater()
+            self._phone_receiver = None
+        self.view.reference_controls.hide()
+
+    def _receive_phone_image(self, image):
+        from beeref.items import BeePixmapItem
+        from beeref.commands import InsertItems
+        from beeref.replace_reference import ReplaceReference
+        selected = [i for i in self.view.scene.selectedItems(user_only=True) if i.is_image]
+        controller = self.pin_controller
+        item = controller.item if controller._locked else (selected[0] if selected else None)
+        if item is None:
+            images = [i for i in self.view.scene.items() if getattr(i, 'is_image', False)]
+            item = images[0] if len(images) == 1 else None
+        if item is not None:
+            self.view.undo_stack.push(ReplaceReference(controller, item, image))
+        else:
+            item = BeePixmapItem(image)
+            target_width = self.view.viewport().width() * .4
+            item.setScale(min(1.0, target_width / image.width()))
+            self.view.undo_stack.push(InsertItems(self.view.scene, [item],
+                self.view.mapToScene(self.view.viewport().rect().center())))
 
     def schedule_native_state(self):
         if getattr(self, '_native_state_pending', False):
@@ -456,6 +495,8 @@ class BeeRefMainWindow(QtWidgets.QMainWindow):
         if platform.system() != 'Windows':
             return
         self._mouse_passthrough = enabled
+        if enabled:
+            self.view.reference_controls.hide()
         # Qt's native flag is the reliable cross-process input pass-through
         # mechanism.  The native WM_NCHITTEST fallback above also covers
         # Windows/Qt combinations that ignore the flag after show().
@@ -509,6 +550,7 @@ class BeeRefMainWindow(QtWidgets.QMainWindow):
             self.pin_status_label.move(18, 18)
 
     def closeEvent(self, event):
+        self.stop_phone_receiver()
         if hasattr(self, 'view'):
             self.view.shutdown_io()
         if hasattr(self, 'pin_controller'):

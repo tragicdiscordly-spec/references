@@ -115,6 +115,8 @@ class BeeGraphicsView(MainControlsMixin,
 
         # Context menu and actions
         self.build_menu_and_actions()
+        from beeref.reference_controls import ReferenceControls
+        self.reference_controls = ReferenceControls(self)
         self._style_context_menu()
         self.control_target = self
         self.init_main_controls(main_window=parent)
@@ -141,6 +143,12 @@ class BeeGraphicsView(MainControlsMixin,
         painter.setCompositionMode(
             QtGui.QPainter.CompositionMode.CompositionMode_Clear)
         painter.fillRect(rect, Qt.GlobalColor.transparent)
+        if not self._locked_overlay_active:
+            # Alpha-zero holes in a layered window pass mouse input to the
+            # desktop. One alpha step retains editing input without a visible
+            # panel; locked mode remains fully transparent and click-through.
+            painter.setCompositionMode(QtGui.QPainter.CompositionMode.CompositionMode_Source)
+            painter.fillRect(rect, QtGui.QColor(0, 0, 0, 1))
         painter.restore()
 
     def set_locked_overlay_active(self, active):
@@ -304,7 +312,8 @@ class BeeGraphicsView(MainControlsMixin,
         self.update_window_title()
 
     def on_context_menu(self, point):
-        self.context_menu.exec(self.mapToGlobal(point))
+        self.scene.end_rubberband_mode()
+        self.reference_controls.open(point)
 
     def get_supported_image_formats(self, cls):
         formats = []
@@ -487,10 +496,7 @@ class BeeGraphicsView(MainControlsMixin,
         self.scene.arrange_square()
 
     def on_action_change_opacity(self):
-        images = list(filter(
-            lambda item: item.is_image,
-            self.scene.selectedItems(user_only=True)))
-        widgets.ChangeOpacityDialog(self, images, self.undo_stack)
+        self.reference_controls.opacity_page()
 
     def on_action_grayscale(self, checked):
         images = list(filter(
@@ -1051,6 +1057,7 @@ class BeeGraphicsView(MainControlsMixin,
             return
 
     def mousePressEvent(self, event):
+        self.reference_controls.hide()
         if self.mousePressEventMainControls(event):
             return
 
