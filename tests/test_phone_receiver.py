@@ -1,5 +1,5 @@
-import base64
 import http.client
+from urllib.parse import urlencode
 import pytest
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets
@@ -44,23 +44,29 @@ def test_phone_endpoint_requires_pairing_and_valid_image(qapp, qtbot):
         connection = http.client.HTTPConnection('127.0.0.1', receiver.port, timeout=3)
         connection.request(method, path, data, headers or {})
         response = connection.getresponse()
-        result = response.status, response.read()
+        result = response.status, response.read(), dict(response.getheaders())
         connection.close()
         return result
-    authorization = 'Basic ' + base64.b64encode(b'gloom:secret').decode()
-    auth = {'Authorization': authorization}
     try:
         assert request('GET', '/')[0] == 404
-        assert request('GET', '/' + receiver.token)[0] == 401
-        assert request('GET', '/' + receiver.token,
-                       headers={'Authorization': 'Basic bad'})[0] == 401
-        assert request('GET', '/' + receiver.token, headers=auth)[0] == 200
+        login_page = request('GET', '/' + receiver.token)
+        assert login_page[0] == 200 and b'<form' in login_page[1]
+        wrong = urlencode({'username': 'gloom', 'password': 'wrong'})
+        assert request('POST', '/' + receiver.token, wrong,
+                       {'Content-Type': 'application/x-www-form-urlencoded'})[0] == 401
+        credentials = urlencode({'username': 'gloom', 'password': 'secret'})
+        logged_in = request('POST', '/' + receiver.token, credentials,
+                            {'Content-Type': 'application/x-www-form-urlencoded'})
+        assert logged_in[0] == 303
+        cookie = logged_in[2]['Set-Cookie'].split(';', 1)[0]
+        session = {'Cookie': cookie}
+        assert request('GET', '/' + receiver.token, headers=session)[0] == 200
         assert request('POST', '/wrong/upload', image_bytes())[0] == 403
         assert request('POST', '/' + receiver.token + '/upload', image_bytes())[0] == 401
-        assert request('POST', '/' + receiver.token + '/upload', b'garbage', auth)[0] == 400
+        assert request('POST', '/' + receiver.token + '/upload', b'garbage', session)[0] == 400
         assert request('POST', '/' + receiver.token + '/upload', b'',
-                       {**auth, 'Content-Length': str(MAX_UPLOAD + 1)})[0] == 413
-        assert request('POST', '/' + receiver.token + '/upload', image_bytes(), auth)[0] == 202
+                       {**session, 'Content-Length': str(MAX_UPLOAD + 1)})[0] == 413
+        assert request('POST', '/' + receiver.token + '/upload', image_bytes(), session)[0] == 202
         qtbot.waitUntil(lambda: len(received) == 1)
         assert received[0].size() == QtCore.QSize(20, 10)
     finally:

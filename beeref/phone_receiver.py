@@ -11,7 +11,9 @@ import secrets
 import shutil
 import subprocess
 import threading
+from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import parse_qs
 
 from PyQt6 import QtCore, QtGui
 from PyQt6.QtNetwork import QNetworkInterface
@@ -84,12 +86,8 @@ def load_login(path=None):
     raise OSError('Phone login is not configured')
 
 
-def check_authorization(header, login):
+def check_login(username, password, login):
     try:
-        scheme, encoded = header.split(' ', 1)
-        if scheme.lower() != 'basic':
-            return False
-        username, password = base64.b64decode(encoded, validate=True).decode().split(':', 1)
         salt = base64.b64decode(login['salt'], validate=True)
         expected = base64.b64decode(login['digest'], validate=True)
         actual = hashlib.pbkdf2_hmac('sha256', password.encode(), salt,
@@ -194,7 +192,20 @@ def decode_image(data):
     return image
 
 
-PAGE = b'''<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
+STYLE = '''body{font:18px system-ui;background:#202225;color:white;
+max-width:480px;margin:40px auto;padding:20px}button,input{font:inherit;margin:10px 0;
+box-sizing:border-box;max-width:100%;padding:12px}input{width:100%;background:#303339;
+color:white;border:1px solid #666;border-radius:5px}button{background:#5865f2;color:white;
+border:0;border-radius:5px;padding:13px 20px}.error{color:#ff9a9a}'''
+
+LOGIN_PAGE = ('''<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>References login</title><style>''' + STYLE + '''</style><h1>References</h1>
+<p>Log in to send an image to your PC.</p>{error}<form method="post" autocomplete="on">
+<label>Username<input name="username" autocomplete="username" required></label>
+<label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+<button type="submit">Log in</button></form>''')
+
+PAGE = ('''<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>References</title><style>body{font:18px system-ui;background:#202225;color:white;
 max-width:480px;margin:40px auto;padding:20px}button,input{font:inherit;margin:16px 0;
 max-width:100%}button{padding:14px}</style><h1>References</h1>
@@ -207,7 +218,7 @@ send.disabled=true;statusText('Sending...');try{const r=await fetch(location.pat
 {method:'POST',body:f,headers:{'Content-Type':'application/octet-stream'}});
 statusText(await r.text());}catch(e){statusText('Cannot reach PC. Check Wi-Fi and receiver.');}
 finally{send.disabled=false;}};function statusText(s){document.getElementById('status').textContent=s;}
-</script>'''
+</script>''').encode()
 
 
 class PhoneReceiver(QtCore.QObject):
@@ -217,6 +228,7 @@ class PhoneReceiver(QtCore.QObject):
                  cloudflare=False, tunnel_factory=CloudflareTunnel):
         super().__init__(parent)
         self.token = secrets.token_urlsafe(18)
+        self.session = secrets.token_urlsafe(32)
         receiver = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -247,25 +259,59 @@ class PhoneReceiver(QtCore.QObject):
             def logged_in(self):
                 if receiver.login is None:
                     return True
-                if check_authorization(self.headers.get('Authorization'), receiver.login):
-                    return True
-                self.reply(401, 'Login required', headers={
-                    'WWW-Authenticate': 'Basic realm="References phone upload", charset="UTF-8"'})
-                return False
+                try:
+                    cookie = SimpleCookie(self.headers.get('Cookie', ''))
+                    supplied = cookie['references_session'].value
+                    return hmac.compare_digest(supplied, receiver.session)
+                except (KeyError, ValueError):
+                    return False
+
+            def login_page(self, incorrect=False):
+                error = '<p class="error">Incorrect username or password.</p>' if incorrect else ''
+                self.reply(401 if incorrect else 200,
+                           LOGIN_PAGE.replace('{error}', error),
+                           'text/html; charset=utf-8')
+
+            def process_login(self):
+                try:
+                    length = int(self.headers.get('Content-Length', '0'))
+                    if length <= 0 or length > 4096:
+                        raise ValueError
+                    fields = parse_qs(self.rfile.read(length).decode('utf-8'),
+                                      keep_blank_values=True)
+                    username = fields.get('username', [''])[0]
+                    password = fields.get('password', [''])[0]
+                except (UnicodeDecodeError, ValueError):
+                    self.login_page(True)
+                    return
+                if not check_login(username, password, receiver.login):
+                    self.login_page(True)
+                    return
+                path = '/' + receiver.token
+                self.reply(303, '', headers={
+                    'Location': path,
+                    'Set-Cookie': ('references_session=' + receiver.session
+                                   + '; Path=' + path
+                                   + '; Max-Age=3600; Secure; HttpOnly; SameSite=Strict')})
 
             def do_GET(self):
                 if not self.authorized():
                     self.reply(404, 'Not found')
                     return
-                if not self.logged_in():
-                    return
-                self.reply(200, PAGE, 'text/html; charset=utf-8')
+                if self.logged_in():
+                    self.reply(200, PAGE, 'text/html; charset=utf-8')
+                else:
+                    self.login_page()
 
             def do_POST(self):
+                if self.authorized():
+                    self.process_login()
+                    return
                 if not self.authorized('/upload'):
                     self.reply(403, 'Invalid pairing link')
                     return
                 if not self.logged_in():
+                    self.reply(401, 'Login required; reopen the secure link')
                     return
                 try:
                     length = int(self.headers.get('Content-Length', '0'))

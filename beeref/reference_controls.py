@@ -104,14 +104,12 @@ class ReferenceControls(QtWidgets.QFrame):
 
     def phone_page(self):
         self.clear()
-        def stop_and_go_back():
-            self.view.parent.stop_phone_receiver()
-            self.open()
-        self.button('← Back', stop_and_go_back)
+        self.button('← Back', lambda: self.open())
         try:
             receiver = self.view.parent.start_phone_receiver()
             message = ('Open this temporary HTTPS link on your phone. '
-                       'Log in as ' + receiver.login['username'] + ':')
+                       'It stays active until you press Stop or quit References. '
+                       'Website username: ' + receiver.login['username'])
             url = receiver.url
         except OSError as error:
             message, url = 'Could not start phone receiver: ' + str(error), ''
