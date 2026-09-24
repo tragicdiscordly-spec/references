@@ -2,8 +2,7 @@ from unittest.mock import patch, MagicMock
 
 from PyQt6 import QtCore, QtWidgets
 
-from beeref.__main__ import (
-    BeeRefApplication, BeeRefMainWindow, PrivatePopupFilter, main)
+from beeref.__main__ import BeeRefMainWindow, PrivatePopupFilter, main
 from beeref.assets import BeeAssets
 from beeref.view import BeeGraphicsView
 
@@ -33,10 +32,13 @@ def test_popup_capture_filter_covers_menus_submenus_and_dialogs(qapp):
 def test_popup_capture_affinity_preserves_input(qapp):
     widget = MagicMock()
     widget.winId.return_value = 123
-    with patch('beeref.__main__.QtGui.QGuiApplication.platformName', return_value='windows'), \
+    with patch('beeref.__main__.QtGui.QGuiApplication.platformName',
+               return_value='windows'), \
             patch('beeref.__main__.get_display_affinity', return_value=0), \
-            patch('beeref.__main__.get_window_long', return_value=0, create=True), \
-            patch('beeref.__main__.set_window_long', create=True) as set_style, \
+            patch('beeref.__main__.get_window_long', return_value=0,
+                  create=True), \
+            patch('beeref.__main__.set_window_long',
+                  create=True) as set_style, \
             patch('beeref.__main__.user32', create=True) as native:
         PrivatePopupFilter.protect(widget)
         assert set_style.call_args.args[2] == 0x00080000
@@ -47,9 +49,12 @@ def test_popup_capture_affinity_preserves_input(qapp):
 def test_popup_reprotects_after_qt_resets_affinity(qapp):
     widget = MagicMock()
     widget.winId.return_value = 123
-    with patch('beeref.__main__.QtGui.QGuiApplication.platformName', return_value='windows'), \
-            patch('beeref.__main__.get_display_affinity', side_effect=[0x11, 0, 0x11]), \
-            patch('beeref.__main__.get_window_long', return_value=0x80000, create=True), \
+    with patch('beeref.__main__.QtGui.QGuiApplication.platformName',
+               return_value='windows'), \
+            patch('beeref.__main__.get_display_affinity',
+                  side_effect=[0x11, 0, 0x11]), \
+            patch('beeref.__main__.get_window_long', return_value=0x80000,
+                  create=True), \
             patch('beeref.__main__.user32', create=True) as native:
         PrivatePopupFilter.protect(widget)
         native.SetWindowDisplayAffinity.assert_not_called()

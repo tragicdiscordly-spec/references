@@ -23,10 +23,14 @@ def test_pairing_link_uses_lan_instead_of_wireguard_address():
     from types import SimpleNamespace
     flags = QNetworkInterface.InterfaceFlag
     kinds = QNetworkInterface.InterfaceType
+
     def interface(kind, address, connected=True):
-        return SimpleNamespace(type=lambda: kind,
-            flags=lambda: (flags.IsUp | flags.IsRunning) if connected else flags.CanBroadcast,
-            addressEntries=lambda: [SimpleNamespace(ip=lambda: SimpleNamespace(toString=lambda: address))])
+        up = flags.IsUp | flags.IsRunning
+        ip = SimpleNamespace(toString=lambda: address)
+        return SimpleNamespace(
+            type=lambda: kind,
+            flags=lambda: up if connected else flags.CanBroadcast,
+            addressEntries=lambda: [SimpleNamespace(ip=lambda: ip)])
     assert lan_address([
         interface(kinds.Unknown, '10.5.0.2'),
         interface(kinds.Wifi, '192.168.2.10', False),
@@ -52,36 +56,40 @@ def test_check_login_rejects_malformed_verifier():
 
 
 def test_phone_endpoint_requires_pairing_and_valid_image(qapp, qtbot):
-    receiver = PhoneReceiver(bind='127.0.0.1', login=make_login('gloom', 'secret'))
+    receiver = PhoneReceiver(bind='127.0.0.1',
+                             login=make_login('gloom', 'secret'))
     received = []
     receiver.image_received.connect(received.append)
+    form = {'Content-Type': 'application/x-www-form-urlencoded'}
+    upload = '/' + receiver.token + '/upload'
+
     def request(method, path, data=None, headers=None):
-        connection = http.client.HTTPConnection('127.0.0.1', receiver.port, timeout=3)
+        connection = http.client.HTTPConnection(
+            '127.0.0.1', receiver.port, timeout=3)
         connection.request(method, path, data, headers or {})
         response = connection.getresponse()
         result = response.status, response.read(), dict(response.getheaders())
         connection.close()
         return result
+
     try:
         assert request('GET', '/')[0] == 404
         login_page = request('GET', '/' + receiver.token)
         assert login_page[0] == 200 and b'<form' in login_page[1]
         wrong = urlencode({'username': 'gloom', 'password': 'wrong'})
-        assert request('POST', '/' + receiver.token, wrong,
-                       {'Content-Type': 'application/x-www-form-urlencoded'})[0] == 401
+        assert request('POST', '/' + receiver.token, wrong, form)[0] == 401
         credentials = urlencode({'username': 'gloom', 'password': 'secret'})
-        logged_in = request('POST', '/' + receiver.token, credentials,
-                            {'Content-Type': 'application/x-www-form-urlencoded'})
+        logged_in = request('POST', '/' + receiver.token, credentials, form)
         assert logged_in[0] == 303
         cookie = logged_in[2]['Set-Cookie'].split(';', 1)[0]
         session = {'Cookie': cookie}
         assert request('GET', '/' + receiver.token, headers=session)[0] == 200
         assert request('POST', '/wrong/upload', image_bytes())[0] == 403
-        assert request('POST', '/' + receiver.token + '/upload', image_bytes())[0] == 401
-        assert request('POST', '/' + receiver.token + '/upload', b'garbage', session)[0] == 400
-        assert request('POST', '/' + receiver.token + '/upload', b'',
-                       {**session, 'Content-Length': str(MAX_UPLOAD + 1)})[0] == 413
-        assert request('POST', '/' + receiver.token + '/upload', image_bytes(), session)[0] == 202
+        assert request('POST', upload, image_bytes())[0] == 401
+        assert request('POST', upload, b'garbage', session)[0] == 400
+        too_large = {**session, 'Content-Length': str(MAX_UPLOAD + 1)}
+        assert request('POST', upload, b'', too_large)[0] == 413
+        assert request('POST', upload, image_bytes(), session)[0] == 202
         qtbot.waitUntil(lambda: len(received) == 1)
         assert received[0].size() == QtCore.QSize(20, 10)
     finally:
@@ -91,12 +99,16 @@ def test_phone_endpoint_requires_pairing_and_valid_image(qapp, qtbot):
 
 def test_cloudflare_start_retries_once(qapp):
     attempts = []
+
     class Tunnel:
         origin = 'https://retry-worked.trycloudflare.com'
         stopped = False
+
         def stop(self):
             self.stopped = True
+
     tunnel = Tunnel()
+
     def factory(port):
         attempts.append(port)
         if len(attempts) == 1:
@@ -127,22 +139,46 @@ def test_controls_are_children_of_protected_window(main_window):
     assert panel.window() is main_window
 
 
+def panel_buttons(panel):
+    widgets = (panel.layout.itemAt(i).widget()
+               for i in range(panel.layout.count()))
+    return [w for w in widgets if isinstance(w, QtWidgets.QPushButton)]
+
+
 @pytest.mark.parametrize('confirmed', [False, True])
-def test_quit_button_uses_app_quit_with_unsaved_changes_check(main_window, qtbot, monkeypatch, confirmed):
+def test_quit_button_uses_app_quit_with_unsaved_changes_check(
+        main_window, qtbot, monkeypatch, confirmed):
     calls = []
     view = main_window.view
-    monkeypatch.setattr(view, 'get_confirmation_unsaved_changes', lambda message: confirmed)
-    monkeypatch.setattr(type(view.app), 'quit', staticmethod(lambda: calls.append('quit')))
+    monkeypatch.setattr(view, 'get_confirmation_unsaved_changes',
+                        lambda message: confirmed)
+    monkeypatch.setattr(type(view.app), 'quit',
+                        staticmethod(lambda: calls.append('quit')))
     view.on_context_menu(QtCore.QPoint(20, 20))
     panel = view.reference_controls
-    button = next(panel.layout.itemAt(i).widget() for i in range(panel.layout.count())
-                  if isinstance(panel.layout.itemAt(i).widget(), QtWidgets.QPushButton)
-                  and panel.layout.itemAt(i).widget().text() == 'Quit References ×')
+    button = next(b for b in panel_buttons(panel)
+                  if b.text() == 'Quit References ×')
     qtbot.mouseClick(button, QtCore.Qt.MouseButton.LeftButton)
     assert calls == (['quit'] if confirmed else [])
 
 
-def test_visible_menu_navigation_lays_out_new_children(main_window, qtbot, monkeypatch):
+def test_phone_page_explains_setup_errors_without_link_buttons(
+        main_window, monkeypatch):
+    def fail():
+        raise OSError('Phone login is not configured.')
+
+    monkeypatch.setattr(main_window, 'start_phone_receiver', fail)
+    panel = main_window.view.reference_controls
+    panel.phone_page()
+    labels = panel.findChildren(QtWidgets.QLabel)
+    assert any('Phone login is not configured' in label.text()
+               for label in labels)
+    assert panel.findChild(QtWidgets.QLineEdit) is None
+    assert [b.text() for b in panel_buttons(panel)] == ['← Back']
+
+
+def test_visible_menu_navigation_lays_out_new_children(
+        main_window, qtbot, monkeypatch):
     from types import SimpleNamespace
     view = main_window.view
     image = QtGui.QImage(20, 20, QtGui.QImage.Format.Format_ARGB32)
@@ -157,10 +193,7 @@ def test_visible_menu_navigation_lays_out_new_children(main_window, qtbot, monke
     view.on_context_menu(QtCore.QPoint(20, 20))
 
     def click(text):
-        button = next(panel.layout.itemAt(i).widget()
-                      for i in range(panel.layout.count())
-                      if isinstance(panel.layout.itemAt(i).widget(), QtWidgets.QPushButton)
-                      and text in panel.layout.itemAt(i).widget().text())
+        button = next(b for b in panel_buttons(panel) if text in b.text())
         qtbot.mouseClick(button, QtCore.Qt.MouseButton.LeftButton)
         QtWidgets.QApplication.processEvents()
 
@@ -196,7 +229,8 @@ def test_empty_background_stays_click_through_in_both_modes(view):
 
 
 @pytest.mark.parametrize('locked', [False, True])
-def test_phone_replacement_preserves_center_opacity_grayscale_and_undo(main_window, monkeypatch, locked):
+def test_phone_replacement_preserves_center_opacity_grayscale_and_undo(
+        main_window, monkeypatch, locked):
     controller = main_window.pin_controller
     image = QtGui.QImage(100, 100, QtGui.QImage.Format.Format_ARGB32)
     image.fill(QtCore.Qt.GlobalColor.blue)
@@ -210,10 +244,12 @@ def test_phone_replacement_preserves_center_opacity_grayscale_and_undo(main_wind
     controller.item = item
     state = dict(protocol=3, zoom=1, canvas_rect=(0, 0, 800, 600),
                  view_matrix_space='image', view_matrix=(1, 0, 0, 1, 0, 0))
-    monkeypatch.setattr(controller.bridge, 'poll', lambda **kw: controller._on_bridge_state(state))
+    monkeypatch.setattr(controller.bridge, 'poll',
+                        lambda **kw: controller._on_bridge_state(state))
     if locked:
         controller.set_locked_visuals(True)
-        baseline = QtGui.QTransform(controller.locked_overlay._local_to_document)
+        baseline = QtGui.QTransform(
+            controller.locked_overlay._local_to_document)
         document_center = baseline.map(QtCore.QPointF(50, 50))
     center = item.mapToScene(item.crop.center())
     replacement = QtGui.QImage(200, 100, QtGui.QImage.Format.Format_ARGB32)
@@ -225,14 +261,16 @@ def test_phone_replacement_preserves_center_opacity_grayscale_and_undo(main_wind
     if locked:
         assert not item.isVisible()
         assert controller._locked
-        actual = controller.locked_overlay._local_to_document.map(QtCore.QPointF(100, 50))
+        actual = controller.locked_overlay._local_to_document.map(
+            QtCore.QPointF(100, 50))
         assert actual.x() == pytest.approx(document_center.x())
         assert actual.y() == pytest.approx(document_center.y())
     main_window.view.undo_stack.undo()
     assert item.pixmap().size() == QtCore.QSize(100, 100)
     assert item.mapToScene(item.crop.center()) == center
     if locked:
-        actual = controller.locked_overlay._local_to_document.map(QtCore.QPointF(50, 50))
+        actual = controller.locked_overlay._local_to_document.map(
+            QtCore.QPointF(50, 50))
         assert actual.x() == pytest.approx(document_center.x())
         assert actual.y() == pytest.approx(document_center.y())
 

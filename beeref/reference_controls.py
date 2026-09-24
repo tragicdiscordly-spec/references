@@ -9,9 +9,11 @@ class ReferenceControls(QtWidgets.QFrame):
         self.view = view
         self.setObjectName('referenceControls')
         self.setStyleSheet('''
-            QFrame#referenceControls { background: #202225; border: 1px solid #555; }
+            QFrame#referenceControls {
+                background: #202225; border: 1px solid #555; }
             QLabel, QCheckBox { color: white; background: #202225; }
-            QPushButton { color: white; background: #303339; padding: 8px; border: 0; text-align: left; }
+            QPushButton { color: white; background: #303339; padding: 8px;
+                          border: 0; text-align: left; }
             QPushButton:hover { background: #454a54; }
             QLineEdit { background: #303339; color: white; padding: 6px; }
         ''')
@@ -46,12 +48,14 @@ class ReferenceControls(QtWidgets.QFrame):
             if action.isSeparator():
                 continue
             if action.menu():
-                self.button(action.text().replace('&', '') + '  ›',
-                            lambda checked=False, m=action.menu(): self.open(menu=m))
+                self.button(
+                    action.text().replace('&', '') + '  ›',
+                    lambda checked=False, m=action.menu(): self.open(menu=m))
             else:
                 label = action.text().replace('&', '')
                 if action.isCheckable():
                     label = ('✓ ' if action.isChecked() else '') + label
+
                 def trigger(checked=False, a=action):
                     self.hide()
                     a.trigger()
@@ -88,14 +92,16 @@ class ReferenceControls(QtWidgets.QFrame):
     def opacity_page(self):
         self.clear()
         self.button('← Back', lambda: self.open())
-        images = [i for i in self.view.scene.selectedItems(user_only=True) if i.is_image]
+        images = [i for i in self.view.scene.selectedItems(user_only=True)
+                  if i.is_image]
         self.layout.addWidget(QtWidgets.QLabel('Opacity', self))
         slider = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal, self)
         slider.setRange(0, 100)
         slider.setValue(round(images[0].opacity() * 100) if images else 100)
         slider.setEnabled(bool(images))
         self.layout.addWidget(slider)
-        self.button('Apply', lambda: self.apply_opacity(images, slider.value()))
+        self.button('Apply',
+                    lambda: self.apply_opacity(images, slider.value()))
         self.present()
 
     def apply_opacity(self, images, value):
@@ -108,17 +114,23 @@ class ReferenceControls(QtWidgets.QFrame):
         try:
             receiver = self.view.parent.start_phone_receiver()
             message = ('Open this temporary HTTPS link on your phone. '
-                       'It stays active until you press Stop or quit References. '
-                       'Website username: ' + receiver.login['username'])
+                       'It stays active until you press Stop or quit '
+                       'References. Website username: '
+                       + receiver.login['username'])
             url = receiver.url
         except OSError as error:
-            message, url = 'Could not start phone receiver: ' + str(error), ''
+            message = 'Could not start phone receiver: ' + str(error)
+            url = ''
         label = QtWidgets.QLabel(message, self)
         label.setWordWrap(True)
         self.layout.addWidget(label)
-        field = QtWidgets.QLineEdit(url, self)
-        field.setReadOnly(True)
-        self.layout.addWidget(field)
-        self.button('Copy secure link', lambda: QtWidgets.QApplication.clipboard().setText(url))
-        self.button('Stop phone receiving', self.view.parent.stop_phone_receiver)
+        if url:
+            field = QtWidgets.QLineEdit(url, self)
+            field.setReadOnly(True)
+            self.layout.addWidget(field)
+            self.button(
+                'Copy secure link',
+                lambda: QtWidgets.QApplication.clipboard().setText(url))
+            self.button('Stop phone receiving',
+                        self.view.parent.stop_phone_receiver)
         self.present()

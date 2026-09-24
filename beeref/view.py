@@ -145,7 +145,8 @@ class BeeGraphicsView(MainControlsMixin,
         painter.fillRect(rect, Qt.GlobalColor.transparent)
         # Empty desktop space must remain alpha-zero even while editing.
         # Filling the virtual desktop with alpha=1 intercepts all clicks in
-        # other apps. Only the image and embedded controls should receive input.
+        # other apps. Only the image and embedded controls should receive
+        # input.
         painter.restore()
 
     def set_locked_overlay_active(self, active):

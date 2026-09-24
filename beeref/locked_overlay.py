@@ -143,7 +143,8 @@ class LockedReferenceOverlay(QtWidgets.QWidget):
         if not self._active or not isinstance(state, dict):
             return
         space = state.get('view_matrix_space') or 'legacy-center'
-        if self._coordinate_space is not None and space != self._coordinate_space:
+        if (self._coordinate_space is not None
+                and space != self._coordinate_space):
             # Never reinterpret a saved anchor in another set of units.
             self.hide()
             return
@@ -183,8 +184,8 @@ class LockedReferenceOverlay(QtWidgets.QWidget):
         def to_overlay(point):
             document_point = self._local_to_document.map(point)
             global_point = document_to_global.map(document_point)
-            return QtCore.QPointF(
-                global_point.x() - geometry.x(), global_point.y() - geometry.y())
+            return QtCore.QPointF(global_point.x() - geometry.x(),
+                                  global_point.y() - geometry.y())
 
         image_to_overlay = affine_from_points(
             to_overlay(QtCore.QPointF(0, 0)),

@@ -161,7 +161,8 @@ class PrivatePopupFilter(QtCore.QObject):
                 and isinstance(obj, QtWidgets.QWidget) and obj.isWindow()
                 and (isinstance(obj, (QtWidgets.QMenu, QtWidgets.QDialog))
                      or obj.windowType() == QtCore.Qt.WindowType.ToolTip
-                     or obj.metaObject().className() in ('QAlphaWidget', 'QRollEffect'))):
+                     or obj.metaObject().className() in (
+                         'QAlphaWidget', 'QRollEffect'))):
             self._applying = True
             try:
                 self.protect(obj)
@@ -248,8 +249,9 @@ class BeeRefApplication(QtWidgets.QApplication):
             if user32.RegisterHotKey(None, hotkey_id, modifiers, key):
                 self._hotkey_registered.append(hotkey_id)
             else:
-                logger.warning('Could not register global %s hotkey (error %s)',
-                               label, ctypes.get_last_error())
+                logger.warning(
+                    'Could not register global %s hotkey (error %s)',
+                    label, ctypes.get_last_error())
         return bool(self._hotkey_registered)
 
     def _unregister_hotkeys(self):
@@ -312,7 +314,8 @@ class BeeRefMainWindow(QtWidgets.QMainWindow):
             QtCore.Qt.WindowType.FramelessWindowHint
             | QtCore.Qt.WindowType.WindowStaysOnTopHint
             | QtCore.Qt.WindowType.Tool))
-        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(
+            QtCore.Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAutoFillBackground(False)
         self.setStyleSheet('QMainWindow { background: transparent; }')
         self._mouse_passthrough = False
@@ -369,8 +372,8 @@ class BeeRefMainWindow(QtWidgets.QMainWindow):
             bool(message) and not self._mouse_passthrough)
         if hasattr(self, 'tray_icon'):
             self.tray_icon.setToolTip(
-                f'BeeRef overlay: {message}' if message else
-                'BeeRef overlay: editable')
+                f'References: {message}' if message else
+                'References: editable')
 
     def _connect_screen_geometry_signals(self, app):
         app.screenAdded.connect(self._on_screen_layout_changed)
@@ -424,7 +427,8 @@ class BeeRefMainWindow(QtWidgets.QMainWindow):
             from beeref.phone_receiver import PhoneReceiver, load_login
             self._phone_receiver = PhoneReceiver(
                 self, bind='127.0.0.1', login=load_login(), cloudflare=True)
-            self._phone_receiver.image_received.connect(self._receive_phone_image)
+            self._phone_receiver.image_received.connect(
+                self._receive_phone_image)
         return self._phone_receiver
 
     def stop_phone_receiver(self):
@@ -438,20 +442,28 @@ class BeeRefMainWindow(QtWidgets.QMainWindow):
         from beeref.items import BeePixmapItem
         from beeref.commands import InsertItems
         from beeref.replace_reference import ReplaceReference
-        selected = [i for i in self.view.scene.selectedItems(user_only=True) if i.is_image]
+        scene = self.view.scene
+        selected = [i for i in scene.selectedItems(user_only=True)
+                    if i.is_image]
         controller = self.pin_controller
-        item = controller.item if controller._locked else (selected[0] if selected else None)
+        if controller._locked:
+            item = controller.item
+        else:
+            item = selected[0] if selected else None
         if item is None:
-            images = [i for i in self.view.scene.items() if getattr(i, 'is_image', False)]
+            images = [i for i in scene.items()
+                      if getattr(i, 'is_image', False)]
             item = images[0] if len(images) == 1 else None
         if item is not None:
-            self.view.undo_stack.push(ReplaceReference(controller, item, image))
+            self.view.undo_stack.push(
+                ReplaceReference(controller, item, image))
         else:
             item = BeePixmapItem(image)
             target_width = self.view.viewport().width() * .4
             item.setScale(min(1.0, target_width / image.width()))
-            self.view.undo_stack.push(InsertItems(self.view.scene, [item],
-                self.view.mapToScene(self.view.viewport().rect().center())))
+            center = self.view.viewport().rect().center()
+            self.view.undo_stack.push(InsertItems(
+                scene, [item], self.view.mapToScene(center)))
 
     def schedule_native_state(self):
         if getattr(self, '_native_state_pending', False):
@@ -512,11 +524,12 @@ class BeeRefMainWindow(QtWidgets.QMainWindow):
 
     def toggle_mouse_passthrough(self):
         self._set_mouse_passthrough(not self._mouse_passthrough)
-        mode = 'locked (click-through)' if self._mouse_passthrough else 'editable'
+        mode = ('locked (click-through)' if self._mouse_passthrough
+                else 'editable')
         self.tray_lock_action.setText(
             'Unlock BeeRef (Ctrl+T)' if self._mouse_passthrough
             else 'Lock BeeRef (Ctrl+T)')
-        self.tray_icon.setToolTip(f'BeeRef overlay: {mode}')
+        self.tray_icon.setToolTip(f'References: {mode}')
         logger.info('Mouse pass-through: %s', self._mouse_passthrough)
 
     def handle_ctrl_t(self):
@@ -530,7 +543,8 @@ class BeeRefMainWindow(QtWidgets.QMainWindow):
             return
         if self._mouse_passthrough:
             self._set_mouse_passthrough(False)
-            self._on_pin_status('Editable — drag image, then press Ctrl+T to pin again')
+            self._on_pin_status(
+                'Editable — drag image, then press Ctrl+T to pin again')
         else:
             controller.resync()
             self._set_mouse_passthrough(True)
@@ -542,8 +556,8 @@ class BeeRefMainWindow(QtWidgets.QMainWindow):
             'Unlock BeeRef (Ctrl+T)' if locked
             else 'Pin here / Lock (Ctrl+T)')
         self.tray_icon.setToolTip(
-            'BeeRef overlay: locked (click-through)' if locked
-            else 'BeeRef overlay: editable')
+            'References: locked (click-through)' if locked
+            else 'References: editable')
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

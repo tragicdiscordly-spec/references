@@ -97,12 +97,16 @@ class BeeRefBridgeExtension(Extension):
                 'rotation': rotation,
             }
             if canvas_widget is not None:
-                payload['canvas_widget_class'] = canvas_widget.metaObject().className()
-                payload['canvas_device_pixel_ratio'] = float(canvas_widget.devicePixelRatioF())
+                payload['canvas_widget_class'] = (
+                    canvas_widget.metaObject().className())
+                payload['canvas_device_pixel_ratio'] = float(
+                    canvas_widget.devicePixelRatioF())
                 screen = canvas_widget.screen()
                 if screen is not None:
+                    geometry = screen.geometry()
                     payload['canvas_screen_name'] = screen.name()
-                    payload['canvas_screen_origin'] = [screen.geometry().x(), screen.geometry().y()]
+                    payload['canvas_screen_origin'] = [
+                        geometry.x(), geometry.y()]
             if canvas_rect is not None:
                 payload['canvas_rect'] = list(canvas_rect)
             if view_matrix is not None:
@@ -257,8 +261,8 @@ class BeeRefBridgeExtension(Extension):
                     word in label for word in preferred_words)
                 # Prefer a real viewport over a large generic container.
                 score += 2_000_000 * sum(
-                    word in label for word in ('qopenglwidget', 'qopengl',
-                                                'canvas3d', 'viewport'))
+                    word in label for word in (
+                        'qopenglwidget', 'qopengl', 'canvas3d', 'viewport'))
                 candidates.append((score, widget))
             except (AttributeError, RuntimeError, TypeError):
                 continue

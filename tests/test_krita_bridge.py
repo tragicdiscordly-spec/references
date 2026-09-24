@@ -18,7 +18,8 @@ def plugin(monkeypatch):
     krita.Extension = QtCore.QObject
     krita.Krita = types.SimpleNamespace(instance=lambda: None)
     monkeypatch.setitem(sys.modules, 'krita', krita)
-    path = Path(__file__).parents[1] / 'krita_plugin/beeref_bridge/beeref_bridge.py'
+    path = (Path(__file__).parents[1]
+            / 'krita_plugin/beeref_bridge/beeref_bridge.py')
     spec = importlib.util.spec_from_file_location('bridge_under_test', path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -31,22 +32,27 @@ def test_plugin_uses_image_pixels_at_nonstandard_document_resolution(plugin):
     view = types.SimpleNamespace(
         flakeToImageTransform=lambda: QtGui.QTransform.fromScale(4, 4),
         flakeToDocumentTransform=lambda: QtGui.QTransform.fromScale(2, 2),
-        flakeToCanvasTransform=lambda: QtGui.QTransform(0, 1, -1, 0, 13.5, 27.25))
+        flakeToCanvasTransform=lambda: QtGui.QTransform(
+            0, 1, -1, 0, 13.5, 27.25))
     assert plugin.BeeRefBridgeExtension._view_matrix(view) == pytest.approx(
         (0, .25, -.25, 0, 13.5, 27.25))
 
 
 def test_plugin_heartbeat_and_high_zoom(plugin, qapp, monkeypatch):
     bridge = plugin.BeeRefBridgeExtension(None)
-    canvas = types.SimpleNamespace(zoomLevel=lambda: 16,
-                                   preferredCenter=lambda: QtCore.QPointF(10, 20),
-                                   rotation=lambda: 0)
+    canvas = types.SimpleNamespace(
+        zoomLevel=lambda: 16,
+        preferredCenter=lambda: QtCore.QPointF(10, 20),
+        rotation=lambda: 0)
     view = types.SimpleNamespace(canvas=lambda: canvas)
-    window = types.SimpleNamespace(activeView=lambda: view, qwindow=lambda: None)
+    window = types.SimpleNamespace(activeView=lambda: view,
+                                   qwindow=lambda: None)
     bridge.app = types.SimpleNamespace(activeWindow=lambda: window)
     monkeypatch.setattr(bridge, '_canvas_widget_for', lambda *args: None)
-    monkeypatch.setattr(bridge, '_widget_global_rect', lambda *args: (0, 0, 400, 300))
-    monkeypatch.setattr(bridge, '_view_matrix', lambda *args: (16, 0, 0, 16, 0, 0))
+    monkeypatch.setattr(bridge, '_widget_global_rect',
+                        lambda *args: (0, 0, 400, 300))
+    monkeypatch.setattr(bridge, '_view_matrix',
+                        lambda *args: (16, 0, 0, 16, 0, 0))
     published = []
     monkeypatch.setattr(bridge, '_write_json', published.append)
     monkeypatch.setattr(plugin.time, 'time', lambda: 100)
@@ -56,7 +62,8 @@ def test_plugin_heartbeat_and_high_zoom(plugin, qapp, monkeypatch):
     assert published[0]['zoom'] == 16
     assert published[0]['view_matrix_space'] == 'image'
     assert published[0]['bridge_build'] == 'image-transform-3.2'
-    assert published[0]['bridge_source'] == str(Path(plugin.__file__).resolve())
+    assert published[0]['bridge_source'] == str(
+        Path(plugin.__file__).resolve())
     monkeypatch.setattr(plugin.time, 'time', lambda: 101)
     bridge.publish()
     assert len(published) == 2
@@ -72,17 +79,24 @@ def test_installer_removes_shadowing_package_and_is_repeatable(tmp_path):
     nested.mkdir(parents=True)
     (nested / '__init__.py').write_text('# old package')
     (package / 'beeref_bridge.py').write_text('# new file that is shadowed')
-    assert PathFinder.find_spec('beeref_bridge.beeref_bridge', [str(package)]).origin == str(nested / '__init__.py')
+
+    def bridge_origin():
+        return PathFinder.find_spec('beeref_bridge.beeref_bridge',
+                                    [str(package)]).origin
+
+    assert bridge_origin() == str(nested / '__init__.py')
     script = Path(__file__).parents[1] / 'krita_plugin/install-bridge.ps1'
     env = dict(os.environ, APPDATA=str(roaming), LOCALAPPDATA=str(local))
     for _ in range(2):
-        subprocess.run([shutil.which('powershell'), '-NoProfile', '-ExecutionPolicy',
-                        'Bypass', '-File', str(script)], env=env, check=True,
-                       capture_output=True, text=True)
+        subprocess.run([shutil.which('powershell'), '-NoProfile',
+                        '-ExecutionPolicy', 'Bypass', '-File', str(script)],
+                       env=env, check=True, capture_output=True, text=True)
         assert not nested.exists()
-        assert PathFinder.find_spec('beeref_bridge.beeref_bridge', [str(package)]).origin == str(package / 'beeref_bridge.py')
+        assert bridge_origin() == str(package / 'beeref_bridge.py')
         source = script.parent / 'beeref_bridge/beeref_bridge.py'
-        assert (package / 'beeref_bridge.py').read_bytes() == source.read_bytes()
+        installed = package / 'beeref_bridge.py'
+        assert installed.read_bytes() == source.read_bytes()
     backups = list((local / 'BeeRef/bridge-backups').iterdir())
     assert len(backups) == 2
-    assert any((backup / 'beeref_bridge/__init__.py').exists() for backup in backups)
+    assert any((backup / 'beeref_bridge/__init__.py').exists()
+               for backup in backups)

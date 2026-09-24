@@ -37,9 +37,11 @@ if platform.system() == 'Windows':
                                       ctypes.c_int]
     user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND,
                                                 ctypes.POINTER(wintypes.DWORD)]
-    user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.GetWindowRect.argtypes = [wintypes.HWND,
+                                     ctypes.POINTER(wintypes.RECT)]
     user32.EnumChildWindows.argtypes = [
-        wintypes.HWND, ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM),
+        wintypes.HWND,
+        ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM),
         wintypes.LPARAM]
     user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
     user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
@@ -100,11 +102,13 @@ def find_paint_windows():
         haystack = f'{title} {executable}'.lower()
         executable_name = os.path.basename(executable).lower()
         if ('clip studio paint' in haystack
-                or executable_name in {'clipstudiopaint.exe', 'clipstudio paint.exe'}):
+                or executable_name in {'clipstudiopaint.exe',
+                                       'clipstudio paint.exe'}):
             found.append(ClipStudioWindow(int(hwnd), title, executable,
                                           'Clip Studio Paint'))
         elif ('krita' in haystack or executable_name == 'krita.exe'):
-            found.append(ClipStudioWindow(int(hwnd), title, executable, 'Krita'))
+            found.append(ClipStudioWindow(int(hwnd), title, executable,
+                                          'Krita'))
         return True
 
     user32.EnumWindows(callback, 0)
@@ -125,7 +129,8 @@ def window_rect(window):
     if platform.system() != 'Windows':
         return QtCore.QRect()
     rect = wintypes.RECT()
-    if not user32.GetWindowRect(wintypes.HWND(window.hwnd), ctypes.byref(rect)):
+    if not user32.GetWindowRect(wintypes.HWND(window.hwnd),
+                                ctypes.byref(rect)):
         return QtCore.QRect()
     return QtCore.QRect(rect.left, rect.top,
                         rect.right - rect.left, rect.bottom - rect.top)
@@ -150,7 +155,8 @@ def window_zoom(window, force=False):
     # Only enumerate Krita's child widgets when the title has no percentage;
     # this keeps the normal 80 ms tracking loop inexpensive.
     texts = [title]
-    if window.application == 'Krita' and not re.search(r'\d+(?:\.\d+)?\s*%', title):
+    if (window.application == 'Krita'
+            and not re.search(r'\d+(?:\.\d+)?\s*%', title)):
         @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
         def callback(hwnd, _):
             text = _window_text(hwnd)
@@ -193,7 +199,8 @@ def cursor_position():
 class LocalTransformBridge(QtCore.QObject):
     """Poll an optional local Clip Studio transform JSON contract.
 
-    A helper/plugin may write ``%LOCALAPPDATA%\\BeeRef\\clipstudio_transform.json``
+    A helper/plugin may write
+    ``%LOCALAPPDATA%\\BeeRef\\clipstudio_transform.json``
     with ``{"matrix": [a, b, c, d, tx, ty]}``. Missing or invalid data is
     treated as unavailable and never breaks window-follow tracking.
     """
@@ -283,7 +290,8 @@ class LocalTransformBridge(QtCore.QObject):
                             or len(canvas_values) != 4):
                         raise ValueError(
                             'canvas_rect must contain x, y, width, height')
-                    canvas_rect = tuple(float(value) for value in canvas_values)
+                    canvas_rect = tuple(
+                        float(value) for value in canvas_values)
                     if canvas_rect[2] <= 0 or canvas_rect[3] <= 0:
                         raise ValueError('canvas_rect must have positive size')
                 view_values = data.get('view_matrix')
@@ -313,7 +321,8 @@ class LocalTransformBridge(QtCore.QObject):
                     'canvas_rect': canvas_rect,
                     'view_matrix': view_matrix,
                     'view_matrix_space': view_matrix_space,
-                    'canvas_device_pixel_ratio': data.get('canvas_device_pixel_ratio'),
+                    'canvas_device_pixel_ratio': data.get(
+                        'canvas_device_pixel_ratio'),
                     'canvas_screen_name': data.get('canvas_screen_name'),
                     'canvas_screen_origin': data.get('canvas_screen_origin'),
                 })
@@ -379,7 +388,8 @@ class ClipStudioPinController(QtCore.QObject):
         self.window_timer.start()
         self.bridge.start()
         self._set_status(
-            f'Pinned to {self.target.application} — Ctrl+T unlocks; image follows')
+            f'Pinned to {self.target.application} — Ctrl+T unlocks; '
+            'image follows')
         return True
 
     def _set_status(self, message):
@@ -539,14 +549,14 @@ class ClipStudioPinController(QtCore.QObject):
             ratio = zoom / self._last_zoom
             if 0.25 < ratio < 4.0 and abs(ratio - 1.0) > 1e-4:
                 self._scale_about_cursor(ratio)
-                self._set_status(f'Pinned ({self.target.application} zoom tracked)')
+                self._set_status(
+                    f'Pinned ({self.target.application} zoom tracked)')
         if zoom is not None:
             self._last_zoom = zoom
 
     def _scale_about_cursor(self, ratio, global_pivot=None):
         if self.item is None:
             return
-        view = self.main_window.view
         if global_pivot is None:
             global_pivot = cursor_position()
         if self._locked:
@@ -638,7 +648,8 @@ class ClipStudioPinController(QtCore.QObject):
                 and len(view_matrix) == 6 and len(canvas_rect) == 4):
             left, top = map(float, canvas_rect[:2])
             a, b, c, d, tx, ty = map(float, view_matrix)
-            if (not all(math.isfinite(v) for v in (a, b, c, d, tx, ty, left, top))
+            if (not all(math.isfinite(v)
+                        for v in (a, b, c, d, tx, ty, left, top))
                     or abs(a * d - b * c) < 1e-12):
                 return None
             # The bridge matrix is document-pixel -> canvas-widget; move its
@@ -746,7 +757,8 @@ class ClipStudioPinController(QtCore.QObject):
         self.locked_overlay.update_state(state, document_to_global)
         if state.get('canvas_rect') is None or document_to_global is None:
             self._set_status(
-                'Pinned — waiting for complete Krita canvas data; restart Krita if needed')
+                'Pinned — waiting for complete Krita canvas data; '
+                'restart Krita if needed')
         else:
             self._set_status('Pinned (Krita canvas locked)')
 
@@ -763,13 +775,15 @@ class ClipStudioPinController(QtCore.QObject):
         rect = state.get('canvas_rect')
         if source_dpr is None or rect is None:
             return state  # Preserve pre-DPI bridge contracts.
-        screens = QtGui.QGuiApplication.screens() if screens is None else screens
+        if screens is None:
+            screens = QtGui.QGuiApplication.screens()
         screen = next((s for s in screens
                        if s.name() == state.get('canvas_screen_name')), None)
         origin = state.get('canvas_screen_origin')
         if screen is None and origin is not None:
-            screen = next((s for s in screens if
-                           (s.geometry().x(), s.geometry().y()) == tuple(origin)), None)
+            screen = next((s for s in screens
+                           if (s.geometry().x(), s.geometry().y())
+                           == tuple(origin)), None)
         if screen is None and len(screens) == 1:
             # Build 3.1 already supplies DPR, but not screen identification.
             screen = screens[0]
@@ -779,8 +793,12 @@ class ClipStudioPinController(QtCore.QObject):
         ratio = float(source_dpr) / screen.devicePixelRatio()
         if not math.isfinite(ratio) or ratio <= 0:
             return dict(state, canvas_rect=None)
-        destination_x, destination_y = screen.geometry().x(), screen.geometry().y()
-        source_x, source_y = origin if origin is not None else (destination_x, destination_y)
+        destination_x = screen.geometry().x()
+        destination_y = screen.geometry().y()
+        if origin is not None:
+            source_x, source_y = origin
+        else:
+            source_x, source_y = destination_x, destination_y
         left, top, width, height = rect
         result = dict(state)
         result['canvas_rect'] = (
@@ -788,7 +806,8 @@ class ClipStudioPinController(QtCore.QObject):
             destination_y + (top - source_y) * ratio,
             width * ratio, height * ratio)
         if state.get('view_matrix') is not None:
-            result['view_matrix'] = tuple(v * ratio for v in state['view_matrix'])
+            result['view_matrix'] = tuple(
+                v * ratio for v in state['view_matrix'])
         result['zoom'] = state['zoom'] * ratio
         return result
 

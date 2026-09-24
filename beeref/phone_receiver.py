@@ -25,7 +25,8 @@ TUNNEL_URL = re.compile(r'https://[a-z0-9-]+\.trycloudflare\.com')
 
 
 def private_runtime_path(filename):
-    project = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+    project = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), os.pardir))
     return os.path.join(project, '.private', filename)
 
 
@@ -83,7 +84,8 @@ def load_login(path=None):
             return login
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             continue
-    raise OSError('Phone login is not configured')
+    raise OSError('Phone login is not configured. Run Set-phone-login.ps1 '
+                  'in the References folder.')
 
 
 def check_login(username, password, login):
@@ -107,7 +109,8 @@ def cloudflared_path():
                       shutil.which('cloudflared')):
         if candidate and os.path.isfile(candidate):
             return candidate
-    raise OSError('Cloudflare Tunnel is not installed for References')
+    raise OSError('Cloudflare Tunnel is not installed. Save cloudflared.exe '
+                  'as ' + local_data_path('cloudflared.exe') + '.')
 
 
 class CloudflareTunnel:
@@ -128,7 +131,8 @@ class CloudflareTunnel:
             while True:
                 line = lines.get(timeout=timeout)
                 if line is None:
-                    raise OSError('Cloudflare Tunnel stopped before it produced a link')
+                    raise OSError('Cloudflare Tunnel stopped before it '
+                                  'produced a link')
                 match = TUNNEL_URL.search(line)
                 if match:
                     origin = match.group(0)
@@ -159,7 +163,8 @@ class CloudflareTunnel:
 
 def lan_address(interfaces=None):
     """Prefer a connected LAN adapter, never a tunnel's hostname address."""
-    interfaces = QNetworkInterface.allInterfaces() if interfaces is None else interfaces
+    if interfaces is None:
+        interfaces = QNetworkInterface.allInterfaces()
     for interface in interfaces:
         if interface.type() not in (QNetworkInterface.InterfaceType.Ethernet,
                                     QNetworkInterface.InterfaceType.Wifi):
@@ -174,7 +179,8 @@ def lan_address(interfaces=None):
             except ValueError:
                 continue
             if (address.version == 4 and not address.is_loopback
-                    and not address.is_link_local and not address.is_unspecified):
+                    and not address.is_link_local
+                    and not address.is_unspecified):
                 return str(address)
     raise OSError('No connected Ethernet or Wi-Fi address found')
 
@@ -194,32 +200,45 @@ def decode_image(data):
     return image
 
 
-STYLE = '''body{font:18px system-ui;background:#202225;color:white;
-max-width:480px;margin:40px auto;padding:20px}button,input{font:inherit;margin:10px 0;
-box-sizing:border-box;max-width:100%;padding:12px}input{width:100%;background:#303339;
-color:white;border:1px solid #666;border-radius:5px}button{background:#5865f2;color:white;
-border:0;border-radius:5px;padding:13px 20px}.error{color:#ff9a9a}'''
+STYLE = '''
+body{font:18px system-ui;background:#202225;color:white;max-width:480px;
+margin:40px auto;padding:20px}
+button,input{font:inherit;margin:10px 0;box-sizing:border-box;max-width:100%;
+padding:12px}
+input{width:100%;background:#303339;color:white;border:1px solid #666;
+border-radius:5px}
+button{background:#5865f2;color:white;border:0;border-radius:5px;
+padding:13px 20px}
+.error{color:#ff9a9a}'''
 
-LOGIN_PAGE = ('''<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>References login</title><style>''' + STYLE + '''</style><h1>References</h1>
-<p>Log in to send an image to your PC.</p>{error}<form method="post" autocomplete="on">
-<label>Username<input name="username" autocomplete="username" required></label>
-<label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+LOGIN_PAGE = ('''<!doctype html>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>References login</title><style>''' + STYLE + '''</style>
+<h1>References</h1><p>Log in to send an image to your PC.</p>{error}
+<form method="post" autocomplete="on">
+<label>Username<input name="username" autocomplete="username" required>
+</label>
+<label>Password<input name="password" type="password"
+autocomplete="current-password" required></label>
 <button type="submit">Log in</button></form>''')
 
-PAGE = ('''<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>References</title><style>body{font:18px system-ui;background:#202225;color:white;
-max-width:480px;margin:40px auto;padding:20px}button,input{font:inherit;margin:16px 0;
-max-width:100%}button{padding:14px}</style><h1>References</h1>
+PAGE = ('''<!doctype html>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>References</title><style>''' + STYLE + '''</style>
+<h1>References</h1>
 <p>Choose an image to replace the selected or locked reference on your PC.</p>
-<input id="file" type="file" accept="image/*"><br><button id="send">Send to PC</button>
+<input id="file" type="file" accept="image/*">
+<button id="send">Send to PC</button>
 <p id="status"></p><script>
 send.onclick=async()=>{const f=file.files[0];if(!f)return;
 if(f.size>20971520){statusText('Image must be under 20 MB');return;}
-send.disabled=true;statusText('Sending...');try{const r=await fetch(location.pathname+'/upload',
+send.disabled=true;statusText('Sending...');
+try{const r=await fetch(location.pathname+'/upload',
 {method:'POST',body:f,headers:{'Content-Type':'application/octet-stream'}});
-statusText(await r.text());}catch(e){statusText('Cannot reach PC. Check Wi-Fi and receiver.');}
-finally{send.disabled=false;}};function statusText(s){document.getElementById('status').textContent=s;}
+statusText(await r.text());}
+catch(e){statusText('Cannot reach PC. Check that phone receiving is on.');}
+finally{send.disabled=false;}};
+function statusText(s){document.getElementById('status').textContent=s;}
 </script>''').encode()
 
 
@@ -241,8 +260,8 @@ class PhoneReceiver(QtCore.QObject):
                 super().setup()
                 self.connection.settimeout(10)
 
-            def reply(self, code, body, content_type='text/plain; charset=utf-8',
-                      headers=None):
+            def reply(self, code, body,
+                      content_type='text/plain; charset=utf-8', headers=None):
                 body = body.encode() if isinstance(body, str) else body
                 self.send_response(code)
                 self.send_header('Content-Type', content_type)
@@ -256,7 +275,8 @@ class PhoneReceiver(QtCore.QObject):
                 self.wfile.write(body)
 
             def authorized(self, suffix=''):
-                return hmac.compare_digest(self.path, '/' + receiver.token + suffix)
+                return hmac.compare_digest(
+                    self.path, '/' + receiver.token + suffix)
 
             def logged_in(self):
                 if receiver.login is None:
@@ -269,7 +289,8 @@ class PhoneReceiver(QtCore.QObject):
                     return False
 
             def login_page(self, incorrect=False):
-                error = '<p class="error">Incorrect username or password.</p>' if incorrect else ''
+                error = ('<p class="error">Incorrect username or password.</p>'
+                         if incorrect else '')
                 self.reply(401 if incorrect else 200,
                            LOGIN_PAGE.replace('{error}', error),
                            'text/html; charset=utf-8')
@@ -294,7 +315,8 @@ class PhoneReceiver(QtCore.QObject):
                     'Location': path,
                     'Set-Cookie': ('references_session=' + receiver.session
                                    + '; Path=' + path
-                                   + '; Max-Age=3600; Secure; HttpOnly; SameSite=Strict')})
+                                   + '; Max-Age=3600; Secure; HttpOnly'
+                                   + '; SameSite=Strict')})
 
             def do_GET(self):
                 if not self.authorized():
@@ -318,7 +340,8 @@ class PhoneReceiver(QtCore.QObject):
                 try:
                     length = int(self.headers.get('Content-Length', '0'))
                     if length <= 0 or length > MAX_UPLOAD:
-                        self.reply(413, 'Image must be between 1 byte and 20 MB')
+                        self.reply(413,
+                                   'Image must be between 1 byte and 20 MB')
                         return
                     data = self.rfile.read(length)
                     if len(data) != length:
@@ -328,13 +351,15 @@ class PhoneReceiver(QtCore.QObject):
                     self.reply(400, str(error))
                     return
                 receiver.image_received.emit(image)
-                self.reply(202, 'Sent to References. Check the reference on your PC.')
+                self.reply(202, 'Sent to References. '
+                                'Check the reference on your PC.')
 
         self.login = login
         self.tunnel = None
         host = lan_address() if bind == '0.0.0.0' else bind
         self.server = HTTPServer((bind, 0), Handler)
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread = threading.Thread(
+            target=self.server.serve_forever, daemon=True)
         self.thread.start()
         self.port = self.server.server_port
         self.url = f'http://{host}:{self.port}/{self.token}'
@@ -347,7 +372,8 @@ class PhoneReceiver(QtCore.QObject):
                     continue
             if self.tunnel is None:
                 self.stop()
-                raise OSError('Cloudflare could not create a link after two attempts')
+                raise OSError('Cloudflare could not create a link after '
+                              'two attempts')
             self.url = f'{self.tunnel.origin}/{self.token}'
 
     def stop(self):

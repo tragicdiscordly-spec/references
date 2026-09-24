@@ -12,7 +12,8 @@ class ReplaceReference(QtGui.QUndoCommand):
         self.pixmap = QtGui.QPixmap.fromImage(image)
         old = item.crop
         scale = min(old.width() / image.width(), old.height() / image.height())
-        self.mapping = QtGui.QTransform(scale, 0, 0, scale,
+        self.mapping = QtGui.QTransform(
+            scale, 0, 0, scale,
             old.center().x() - image.width() * scale / 2,
             old.center().y() - image.height() * scale / 2)
 
@@ -33,9 +34,11 @@ class ReplaceReference(QtGui.QUndoCommand):
     def refresh_locked(self, mapping):
         c = self.controller
         overlay = c.locked_overlay
-        if not c._locked or c.item is not self.item or overlay._local_to_document is None:
+        if (not c._locked or c.item is not self.item
+                or overlay._local_to_document is None):
             return
-        baseline = LockedReferenceOverlay._compose_by_mapping(mapping, overlay._local_to_document)
+        baseline = LockedReferenceOverlay._compose_by_mapping(
+            mapping, overlay._local_to_document)
         state = c._bridge_state
         if state is None:
             overlay._source = overlay._source_pixmap(self.item)
@@ -45,15 +48,18 @@ class ReplaceReference(QtGui.QUndoCommand):
             return
         transform = c._document_to_global_transform(state)
         if transform is not None:
-            global_mapping = LockedReferenceOverlay._compose_by_mapping(baseline, transform)
+            global_mapping = LockedReferenceOverlay._compose_by_mapping(
+                baseline, transform)
             overlay.set_reference(self.item, global_mapping, state, transform)
 
     def redo(self):
         if self.after is None:
             center = self.item.mapToScene(self.item.crop.center())
             self.item.setPixmap(self.pixmap)
-            self.item.setScale(self.before[2] * self.mapping.m11(), anchor=QtCore.QPointF())
-            self.item.setPos(self.item.pos() + center - self.item.mapToScene(self.item.crop.center()))
+            self.item.setScale(self.before[2] * self.mapping.m11(),
+                               anchor=QtCore.QPointF())
+            self.item.setPos(self.item.pos() + center
+                             - self.item.mapToScene(self.item.crop.center()))
             self.item.filename = None
             self.item.grayscale = self.before[5]
             self.after = self.snapshot()
