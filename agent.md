@@ -12,10 +12,15 @@ input. PhoneReceiver is started explicitly by the pairing panel, binds only to
 loopback, and uses an outbound Cloudflare Quick Tunnel for phone access through
 the PC's VPN. Both the random URL token and an HTML login form with a secure
 session cookie are required. The password is stored only as a salted verifier
-under `%LOCALAPPDATA%\\References`,
-outside Git. Uploaded images stay in memory and pass to the GUI thread as
-decoded QImages. ReplaceReference preserves the document anchor and supports
-Undo. Keep pairing tokens, login data, and image data out of logs and GitHub.
+in `%LOCALAPPDATA%\\References\\phone-login.json` and the git-ignored
+`.private` folder; `Set-phone-login.ps1` writes both. Usernames may be
+non-ASCII, so compare them as bytes. Uploaded images stay in memory and pass
+to the GUI thread as decoded QImages. ReplaceReference preserves the document
+anchor and supports Undo. It changes the item's pixmap in place, so
+`BeePixmapItem.setPixmap` sets `pixmap_changed` and `SQLiteIO.update_item`
+rewrites that item's image blob on the next save; keep that flag for any other
+in-place image edit. Keep pairing tokens, login data, and image data out of
+logs and GitHub.
 
 The private GitHub repository and README present this project as References.
 Keep internal BeeRef module names, settings paths, bridge paths and original
@@ -128,9 +133,15 @@ Compile the Python sources:
 
     python -m compileall -q beeref krita_plugin
 
-Run the test suite:
+Run the test suite and linter (flake8 enforces 79-column lines):
 
     pytest -q
+    flake8 .
+
+GitHub Actions runs both on every push, with the tests in Qt's offscreen mode
+on Python 3.10 to 3.12. When run as root on Linux, five tests expecting
+PermissionError on read-only files fail because root can still write; they
+pass as a normal user.
 
 When testing alignment, use a saved or disposable Krita document. Verify in
 this order: lock, draw through the overlay, move the Krita window, pan the
