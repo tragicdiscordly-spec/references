@@ -378,6 +378,38 @@ def test_sqliteio_write_updates_existing_pixmap_item(tmpfile, view):
     assert result[7] == b'abc'
 
 
+def test_sqliteio_write_updates_replaced_pixmap_data(tmpfile, view):
+    item = BeePixmapItem(QtGui.QImage(), filename='bee.png')
+    view.scene.addItem(item)
+    item.pixmap_to_bytes = MagicMock(return_value=(b'abc', 'png'))
+    io = SQLiteIO(tmpfile, view.scene, create_new=True)
+    io.write()
+    assert item.pixmap_changed is False
+
+    item.setPixmap(QtGui.QPixmap(4, 4))
+    assert item.pixmap_changed is True
+    item.pixmap_to_bytes.return_value = (b'replaced', 'jpg')
+    io.create_new = False
+    io.write()
+
+    assert io.fetchone('SELECT COUNT(*) from sqlar') == (1,)
+    assert io.fetchone('SELECT name, sz, data FROM sqlar') == (
+        f'{item.save_id:04}-bee.jpg', 8, b'replaced')
+    assert item.pixmap_changed is False
+
+
+def test_sqliteio_write_update_skips_unchanged_pixmap_data(tmpfile, view):
+    item = BeePixmapItem(QtGui.QImage(), filename='bee.png')
+    view.scene.addItem(item)
+    item.pixmap_to_bytes = MagicMock(return_value=(b'abc', 'png'))
+    io = SQLiteIO(tmpfile, view.scene, create_new=True)
+    io.write()
+    item.pixmap_to_bytes.reset_mock()
+    io.create_new = False
+    io.write()
+    item.pixmap_to_bytes.assert_not_called()
+
+
 def test_sqliteio_write_keeps_pixmap_item_of_error_item(tmpfile, view):
     item = BeePixmapItem(QtGui.QImage(), filename='bee.png')
     view.scene.addItem(item)
@@ -580,6 +612,7 @@ def test_sqliteio_read_reads_readonly_pixmap_item(tmpfile, view, imgdata3x3):
     assert item.crop == QtCore.QRectF(0, 0, 3, 3)
     assert item.opacity() == 1
     assert item.grayscale is False
+    assert item.pixmap_changed is False
     assert view.scene.items_to_add.empty() is True
 
 

@@ -220,3 +220,43 @@ def test_phone_replacement_preserves_center_opacity_grayscale_and_undo(main_wind
         actual = controller.locked_overlay._local_to_document.map(QtCore.QPointF(50, 50))
         assert actual.x() == pytest.approx(document_center.x())
         assert actual.y() == pytest.approx(document_center.y())
+
+
+def test_phone_replacement_is_written_when_saved_board_is_saved_again(
+        main_window, tmpdir):
+    from beeref.fileio.sql import SQLiteIO
+    from beeref.scene import BeeGraphicsScene
+    view = main_window.view
+    path = str(tmpdir / 'board.bee')
+    original = QtGui.QImage(100, 100, QtGui.QImage.Format.Format_ARGB32)
+    original.fill(QtCore.Qt.GlobalColor.blue)
+    item = BeePixmapItem(original)
+    view.scene.addItem(item)
+    SQLiteIO(path, view.scene, create_new=True).write()
+
+    replacement = QtGui.QImage(200, 100, QtGui.QImage.Format.Format_ARGB32)
+    replacement.fill(QtCore.Qt.GlobalColor.red)
+    main_window._receive_phone_image(replacement)
+    SQLiteIO(path, view.scene).write()
+
+    scenes = []  # Keep reloaded scenes alive while their items are used
+
+    def reload():
+        scenes.append(BeeGraphicsScene(QtGui.QUndoStack()))
+        SQLiteIO(path, scenes[-1], readonly=True).read()
+        scenes[-1].add_queued_items()
+        images = [i for i in scenes[-1].items() if i.is_image]
+        assert len(images) == 1
+        return images[0]
+
+    loaded = reload()
+    assert loaded.pixmap().size() == QtCore.QSize(200, 100)
+    assert loaded.crop == QtCore.QRectF(0, 0, 200, 100)
+    assert loaded.pixmap().toImage().pixelColor(5, 5) == QtGui.QColor('red')
+
+    # Undo restores the original image, which must be written again too.
+    view.undo_stack.undo()
+    SQLiteIO(path, view.scene).write()
+    loaded = reload()
+    assert loaded.pixmap().size() == QtCore.QSize(100, 100)
+    assert loaded.pixmap().toImage().pixelColor(5, 5) == QtGui.QColor('blue')

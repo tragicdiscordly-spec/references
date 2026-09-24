@@ -115,6 +115,7 @@ class BeePixmapItem(BeeItemMixin, QtWidgets.QGraphicsPixmapItem):
     def __init__(self, image, filename=None, **kwargs):
         super().__init__(QtGui.QPixmap.fromImage(image))
         self.save_id = None
+        self.pixmap_changed = False
         self.filename = filename
         self.reset_crop()
         logger.debug(f'Initialized {self}')
@@ -271,6 +272,9 @@ class BeePixmapItem(BeeItemMixin, QtWidgets.QGraphicsPixmapItem):
     def setPixmap(self, pixmap):
         super().setPixmap(pixmap)
         self.reset_crop()
+        # Saving only rewrites image data of already saved items when
+        # this is set, since re-encoding every image is slow.
+        self.pixmap_changed = True
 
     def pixmap_from_bytes(self, data):
         """Set image pimap from a bytestring."""

@@ -219,6 +219,7 @@ class SQLiteIO:
             if data['type'] == 'pixmap':
                 item = BeePixmapItem(QtGui.QImage())
                 item.pixmap_from_bytes(row[9])
+                item.pixmap_changed = False
                 if item.pixmap().isNull():
                     item = data['data']['text'] = (
                         f'Image could not be loaded: {item.filename}\n'
@@ -312,12 +313,13 @@ class SQLiteIO:
                 'VALUES (?, ?, ?, ?, ?)',
                 (item.save_id, name, 0o644, len(pixmap), pixmap))
         self.connection.commit()
+        item.pixmap_changed = False
 
     def update_item(self, item):
         """Update item data.
 
-        We only update the item data, not the pixmap data, as pixmap
-        data never changes and is also time-consuming to save.
+        Pixmap data is time-consuming to save, so it is only rewritten
+        when the item's image was replaced since the last save.
         """
         self.ex(
             'UPDATE items SET x=?, y=?, z=?, scale=?, rotation=?, flip=?, '
@@ -327,4 +329,13 @@ class SQLiteIO:
              item.rotation(), item.flip(),
              json.dumps(item.get_extra_save_data()),
              item.save_id))
+        pixmap_changed = getattr(item, 'pixmap_changed', False)
+        if pixmap_changed:
+            pixmap, imgformat = item.pixmap_to_bytes()
+            name = item.get_filename_for_export(imgformat)
+            self.ex(
+                'UPDATE sqlar SET name=?, sz=?, data=? WHERE item_id=?',
+                (name, len(pixmap), pixmap, item.save_id))
         self.connection.commit()
+        if pixmap_changed:
+            item.pixmap_changed = False

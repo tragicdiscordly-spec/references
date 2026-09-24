@@ -22,7 +22,15 @@ def test_init(selectable_mock, qapp, imgfilename3x3):
     assert item.crop == QtCore.QRectF(0, 0, 3, 3)
     assert item.is_image is True
     assert item.crop_mode is False
+    assert item.pixmap_changed is False
     selectable_mock.assert_called_once()
+
+
+def test_set_pixmap_marks_pixmap_changed_and_resets_crop(qapp, item):
+    item.crop = QtCore.QRectF(1, 1, 5, 5)
+    item.setPixmap(QtGui.QPixmap(20, 30))
+    assert item.pixmap_changed is True
+    assert item.crop == QtCore.QRectF(0, 0, 20, 30)
 
 
 def test_set_pos_center(qapp, item):
