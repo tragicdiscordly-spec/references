@@ -2,21 +2,25 @@ name: flake8
 
 on: [push, pull_request]
 
+permissions:
+  contents: read
+
 jobs:
   flake8:
 
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: 3.12
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install flake8
+          # Same version as requirements/dev.txt, so local runs match CI.
+          pip install flake8==7.0.0
       - name: Analysing the code with flake8
         run: |
           flake8 .
