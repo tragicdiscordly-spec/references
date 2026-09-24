@@ -3,7 +3,8 @@ from urllib.parse import urlencode
 import pytest
 from PyQt6 import QtCore, QtGui
 from PyQt6 import QtWidgets
-from beeref.phone_receiver import PhoneReceiver, MAX_UPLOAD, lan_address, make_login
+from beeref.phone_receiver import (
+    PhoneReceiver, MAX_UPLOAD, check_login, lan_address, make_login)
 from PyQt6.QtNetwork import QNetworkInterface
 from beeref.items import BeePixmapItem
 
@@ -34,6 +35,20 @@ def test_pairing_link_uses_lan_instead_of_wireguard_address():
     assert lan_address([interface(kinds.Ethernet, '10.0.0.15')]) == '10.0.0.15'
     with pytest.raises(OSError):
         lan_address([interface(kinds.Unknown, '10.5.0.2')])
+
+
+@pytest.mark.parametrize('username', ['gloom', 'Zoë', '絵描き'])
+def test_check_login_accepts_any_username(username):
+    login = make_login(username, 'sécret')
+    assert check_login(username, 'sécret', login)
+    assert not check_login(username, 'wrong', login)
+    assert not check_login(username + 'x', 'sécret', login)
+
+
+def test_check_login_rejects_malformed_verifier():
+    login = make_login('gloom', 'secret')
+    login['salt'] = 'not base64!'
+    assert not check_login('gloom', 'secret', login)
 
 
 def test_phone_endpoint_requires_pairing_and_valid_image(qapp, qtbot):

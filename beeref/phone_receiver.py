@@ -92,7 +92,9 @@ def check_login(username, password, login):
         expected = base64.b64decode(login['digest'], validate=True)
         actual = hashlib.pbkdf2_hmac('sha256', password.encode(), salt,
                                      int(login['iterations']))
-        return (hmac.compare_digest(username, login['username'])
+        # compare_digest only accepts ASCII str; bytes allow any username.
+        return (hmac.compare_digest(username.encode(),
+                                    login['username'].encode())
                 and hmac.compare_digest(actual, expected))
     except (AttributeError, ValueError, TypeError, KeyError):
         return False
