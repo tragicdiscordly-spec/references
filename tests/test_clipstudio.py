@@ -281,3 +281,18 @@ def test_detach_restores_editing_repaint_mode(qapp):
     assert (main.view.viewportUpdateMode()
             == QtWidgets.QGraphicsView.ViewportUpdateMode.MinimalViewportUpdate)
     main.close()
+
+
+@pytest.mark.parametrize('content', ['[1, 2]', '"text"', '{"zoom": "big"}',
+                                     '{"protocol": 3, "timestamp": "x"}'])
+def test_bridge_ignores_malformed_state(qapp, tmp_path, content):
+    bridge = LocalTransformBridge()
+    bridge.path = str(tmp_path / 'state.json')
+    tmp_path.joinpath('state.json').write_text(content)
+    states, disconnects = [], []
+    bridge.stateChanged.connect(states.append)
+    bridge.disconnected.connect(lambda: disconnects.append(True))
+    bridge.poll()
+    bridge.poll()
+    assert states == []
+    assert disconnects == [True]

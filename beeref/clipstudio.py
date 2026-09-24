@@ -239,6 +239,9 @@ class LocalTransformBridge(QtCore.QObject):
                 return
             with open(self.path, encoding='utf-8') as stream:
                 data = json.load(stream)
+            # An uncaught error in this timer slot would quit BeeRef.
+            if not isinstance(data, dict):
+                raise ValueError('bridge state must be a JSON object')
             self._heartbeat_required = data.get('protocol', 2) >= 3
             if (self._heartbeat_required
                     and time.time() - float(data.get('timestamp', 0)) > 2.0):
