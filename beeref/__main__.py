@@ -136,6 +136,26 @@ def capture_enabled_for_diagnostics(window):
         user32.SetWindowDisplayAffinity(hwnd, restore)
 
 
+def edit_surface_rect(geometries, available):
+    """Return one rectangle over all monitors that is never full screen.
+
+    Windows treats a window covering a whole monitor as a full-screen app:
+    it hides the taskbar and turns on do-not-disturb. Cover only the
+    monitors' available areas, which leave out docked taskbars. An
+    auto-hiding taskbar leaves the available area at full size, and the
+    bounding box of several monitors can contain one completely, so trim
+    one edge row in those cases.
+    """
+    rect = QtCore.QRect(available[0])
+    for area in available[1:]:
+        rect = rect.united(area)
+    if any(rect.contains(geometry) for geometry in geometries):
+        rect.setBottom(rect.bottom() - 1)
+    if any(rect.contains(geometry) for geometry in geometries):
+        rect.setTop(rect.top() + 1)
+    return rect
+
+
 class HotkeyFilter(QtCore.QAbstractNativeEventFilter):
     def __init__(self, app):
         super().__init__()
@@ -379,24 +399,32 @@ class BeeRefMainWindow(QtWidgets.QMainWindow):
         app.screenAdded.connect(self._on_screen_layout_changed)
         app.screenRemoved.connect(self._on_screen_layout_changed)
         for screen in app.screens():
-            screen.geometryChanged.connect(self.cover_virtual_desktop)
+            self._watch_screen(screen)
+
+    def _watch_screen(self, screen):
+        screen.geometryChanged.connect(self.cover_virtual_desktop)
+        # Moving, resizing or auto-hiding the taskbar changes this.
+        screen.availableGeometryChanged.connect(self.cover_virtual_desktop)
 
     def _on_screen_layout_changed(self, screen):
         if screen is not None:
             try:
-                screen.geometryChanged.connect(self.cover_virtual_desktop)
+                self._watch_screen(screen)
             except RuntimeError:
                 pass
         QtCore.QTimer.singleShot(0, self.cover_virtual_desktop)
 
     def cover_virtual_desktop(self, *_args):
-        """Keep the transparent edit surface over every connected monitor."""
+        """Keep the transparent edit surface over every connected monitor.
+
+        The surface leaves out the taskbar; see ``edit_surface_rect``.
+        """
         screens = QtGui.QGuiApplication.screens()
         if not screens:
             return
-        desktop = QtCore.QRect(screens[0].geometry())
-        for screen in screens[1:]:
-            desktop = desktop.united(screen.geometry())
+        desktop = edit_surface_rect(
+            [screen.geometry() for screen in screens],
+            [screen.availableGeometry() for screen in screens])
         if self.geometry() != desktop:
             self.setGeometry(desktop)
         self.schedule_native_state()

@@ -1,6 +1,6 @@
 from unittest.mock import patch, MagicMock
 
-from PyQt6 import QtCore, QtWidgets
+from PyQt6 import QtCore, QtGui, QtWidgets
 
 from beeref.__main__ import BeeRefMainWindow, PrivatePopupFilter, main
 from beeref.assets import BeeAssets
@@ -120,3 +120,34 @@ def test_main(startup_mock, args_mock, app_mock, qapp):
 
     args_mock.assert_called_once_with(with_check=True)
     startup_mock.assert_called()
+
+
+def test_edit_surface_leaves_out_docked_taskbar():
+    from beeref.__main__ import edit_surface_rect
+    monitor = QtCore.QRect(0, 0, 4096, 1152)
+    available = QtCore.QRect(0, 0, 4096, 1114)
+    assert edit_surface_rect([monitor], [available]) == available
+
+
+def test_edit_surface_never_covers_a_whole_monitor():
+    from beeref.__main__ import edit_surface_rect
+    layouts = [
+        # Auto-hiding taskbar: the available area is the whole monitor.
+        ([QtCore.QRect(0, 0, 4096, 1152)],
+         [QtCore.QRect(0, 0, 4096, 1152)]),
+        # Taskbar on the left monitor only; the bounding box covers both.
+        ([QtCore.QRect(0, 0, 1920, 1080), QtCore.QRect(1920, 0, 1920, 1080)],
+         [QtCore.QRect(0, 0, 1920, 1040), QtCore.QRect(1920, 0, 1920, 1080)]),
+        # Monitors of different heights aligned at the top.
+        ([QtCore.QRect(0, 0, 2560, 1440), QtCore.QRect(2560, 0, 1920, 1080)],
+         [QtCore.QRect(0, 0, 2560, 1440), QtCore.QRect(2560, 0, 1920, 1080)]),
+    ]
+    for geometries, available in layouts:
+        rect = edit_surface_rect(geometries, available)
+        assert not any(rect.contains(geometry) for geometry in geometries)
+        assert all(rect.intersects(area) for area in available)
+
+
+def test_main_window_does_not_cover_whole_screen(main_window):
+    for screen in QtGui.QGuiApplication.screens():
+        assert not main_window.geometry().contains(screen.geometry())
