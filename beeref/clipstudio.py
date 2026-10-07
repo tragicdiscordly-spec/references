@@ -3,16 +3,20 @@
 from dataclasses import dataclass
 import ctypes
 import json
+import logging
 import math
+import ntpath
 import os
 import platform
 import re
 import time
 from ctypes import wintypes
 
-from PyQt6 import QtCore, QtGui, QtWidgets
+from PyQt6 import QtCore, QtGui
 
 from beeref.locked_overlay import LockedReferenceOverlay, affine_from_points
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -21,6 +25,15 @@ class ClipStudioWindow:
     title: str
     executable: str = ''
     application: str = 'Clip Studio Paint'
+    pid: int = 0
+
+
+@dataclass
+class DesktopWindow:
+    """A visible top-level window, as found by ``visible_windows``."""
+    hwnd: int
+    rect: QtCore.QRect
+    pid: int
 
 
 if platform.system() == 'Windows':
@@ -54,6 +67,16 @@ if platform.system() == 'Windows':
         wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
         ctypes.POINTER(wintypes.DWORD)]
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    user32.GetWindowLongW.argtypes = [wintypes.HWND, ctypes.c_int]
+    user32.GetWindowLongW.restype = ctypes.c_long
+    dwmapi = ctypes.WinDLL('dwmapi')
+    dwmapi.DwmGetWindowAttribute.argtypes = [
+        wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+    dwmapi.DwmGetWindowAttribute.restype = ctypes.c_long
+
+GWL_EXSTYLE = -20
+WS_EX_TRANSPARENT = 0x00000020
+DWMWA_CLOAKED = 14
 
 
 def _window_text(hwnd):
@@ -65,11 +88,17 @@ def _window_text(hwnd):
     return buffer.value
 
 
-def _process_path(hwnd):
+def _process_id(hwnd):
     pid = wintypes.DWORD()
     user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    return pid.value
+
+
+def _process_path(hwnd):
+    if platform.system() != 'Windows':
+        return ''
     handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False,
-                                  pid.value)
+                                  _process_id(hwnd))
     if not handle:
         return ''
     try:
@@ -81,6 +110,27 @@ def _process_path(hwnd):
         return ''
     finally:
         kernel32.CloseHandle(handle)
+
+
+def paint_application(title, executable):
+    """Return which paint application owns a window, or None.
+
+    Match the executable, so a browser tab titled "Krita" is not mistaken
+    for Krita. Fall back to the title only when Windows hides the path,
+    as it does for apps running as administrator.
+    """
+    name = ntpath.basename(executable).lower()
+    if name in {'clipstudiopaint.exe', 'clipstudio paint.exe'}:
+        return 'Clip Studio Paint'
+    if name == 'krita.exe':
+        return 'Krita'
+    if not executable:
+        title = title.lower()
+        if 'clip studio paint' in title:
+            return 'Clip Studio Paint'
+        if 'krita' in title:
+            return 'Krita'
+    return None
 
 
 def find_paint_windows():
@@ -99,20 +149,105 @@ def find_paint_windows():
             return True
         title = _window_text(hwnd)
         executable = _process_path(hwnd)
-        haystack = f'{title} {executable}'.lower()
-        executable_name = os.path.basename(executable).lower()
-        if ('clip studio paint' in haystack
-                or executable_name in {'clipstudiopaint.exe',
-                                       'clipstudio paint.exe'}):
+        application = paint_application(title, executable)
+        if application is not None:
             found.append(ClipStudioWindow(int(hwnd), title, executable,
-                                          'Clip Studio Paint'))
-        elif ('krita' in haystack or executable_name == 'krita.exe'):
-            found.append(ClipStudioWindow(int(hwnd), title, executable,
-                                          'Krita'))
+                                          application, _process_id(hwnd)))
         return True
 
     user32.EnumWindows(callback, 0)
     return found
+
+
+def _is_cloaked(hwnd):
+    # Suspended Store apps keep visible but cloaked, invisible windows.
+    cloaked = wintypes.DWORD()
+    result = dwmapi.DwmGetWindowAttribute(
+        hwnd, DWMWA_CLOAKED, ctypes.byref(cloaked), ctypes.sizeof(cloaked))
+    return result == 0 and cloaked.value != 0
+
+
+def visible_windows():
+    """Return the windows a user can see, topmost first.
+
+    EnumWindows lists top-level windows in z-order. Skip minimized,
+    cloaked and click-through windows, which never cover what is below.
+    """
+    if platform.system() != 'Windows':
+        return []
+    found = []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+    def callback(hwnd, _):
+        if (not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd)
+                or user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+                & WS_EX_TRANSPARENT
+                or _is_cloaked(hwnd)):
+            return True
+        rect = wintypes.RECT()
+        if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            return True
+        found.append(DesktopWindow(
+            int(hwnd),
+            QtCore.QRect(rect.left, rect.top, rect.right - rect.left,
+                         rect.bottom - rect.top),
+            _process_id(hwnd)))
+        return True
+
+    user32.EnumWindows(callback, 0)
+    return found
+
+
+def window_at(point, windows, own_pid):
+    """Return the topmost window at a physical point, except our own.
+
+    ``windows`` are visible windows topmost first, from ``visible_windows``.
+    """
+    for window in windows:
+        if window.pid != own_pid and window.rect.contains(point):
+            return window
+    return None
+
+
+def paint_window_for(window, windows, paint_windows):
+    """Return the Krita / Clip Studio main window owning ``window``.
+
+    A floating docker belongs to the same process as the main window, which
+    is that process's largest window. Returns None for other applications.
+    """
+    if window is None:
+        return None
+    candidates = [paint for paint in paint_windows
+                  if paint.hwnd == window.hwnd
+                  or paint.pid and paint.pid == window.pid]
+    if not candidates:
+        return None
+    rects = {visible.hwnd: visible.rect for visible in windows}
+
+    def area(paint):
+        rect = rects.get(paint.hwnd, QtCore.QRect())
+        return rect.width() * rect.height()
+
+    return max(candidates, key=area)
+
+
+def native_point(point, screens=None):
+    """Map a point in Qt desktop coordinates to Windows physical pixels.
+
+    Qt keeps each screen's origin in physical pixels and scales distances
+    from it by the screen's device pixel ratio.
+    """
+    if screens is None:
+        screens = QtGui.QGuiApplication.screens()
+    for screen in screens:
+        geometry = screen.geometry()
+        if geometry.contains(QtCore.QPoint(math.floor(point.x()),
+                                           math.floor(point.y()))):
+            ratio = screen.devicePixelRatio()
+            return QtCore.QPoint(
+                round(geometry.x() + (point.x() - geometry.x()) * ratio),
+                round(geometry.y() + (point.y() - geometry.y()) * ratio))
+    return QtCore.QPoint(round(point.x()), round(point.y()))
 
 
 def find_clip_studio_windows():
@@ -340,7 +475,7 @@ class LocalTransformBridge(QtCore.QObject):
 
 
 class ClipStudioPinController(QtCore.QObject):
-    """Pin one BeeRef image to a Clip Studio Paint or Krita window."""
+    """Pin one image to Krita / Clip Studio, or in place on the screen."""
 
     statusChanged = QtCore.pyqtSignal(str)
 
@@ -349,6 +484,8 @@ class ClipStudioPinController(QtCore.QObject):
         self.main_window = main_window
         self.target = None
         self.item = None
+        # Pinned somewhere other than a paint app: the image stays put.
+        self.screen_pinned = False
         self._last_rect = QtCore.QRect()
         self._last_zoom = None
         self._bridge_available = False
@@ -374,10 +511,25 @@ class ClipStudioPinController(QtCore.QObject):
 
     def attach(self):
         """Pin the selected image at its current on-screen placement."""
-        if not self._select_item_and_target():
+        selected = self.main_window.view.scene.selectedItems(user_only=True)
+        if len(selected) != 1 or not getattr(selected[0], 'is_image', False):
+            self._set_status('Select one image to attach')
             return False
-        self._last_rect = window_rect(self.target)
-        self._last_zoom = window_zoom(self.target, force=True)
+        return self._pin(selected[0])
+
+    def repin(self):
+        """Pin the current image again where it sits now."""
+        if self.item is None or self.item.scene() is None:
+            return self.attach()
+        return self._pin(self.item)
+
+    def _pin(self, item):
+        """Follow the paint app under the image, or stay fixed on screen."""
+        if self.item is not None and self.item is not item:
+            self._end_locked_overlay()
+        self.item = item
+        self.target = self._paint_window_under(item)
+        self.screen_pinned = self.target is None
         self._bridge_available = False
         self._bridge_zoom = None
         self._bridge_center = None
@@ -385,12 +537,34 @@ class ClipStudioPinController(QtCore.QObject):
         self._bridge_initial_state = None
         if hasattr(self, '_bridge_matrix'):
             del self._bridge_matrix
+        if self.screen_pinned:
+            self.window_timer.stop()
+            self.bridge.stop()
+            self._last_rect = QtCore.QRect()
+            self._last_zoom = None
+            self._set_status('Pinned in place — Ctrl+T unlocks')
+            return True
+        self._last_rect = window_rect(self.target)
+        self._last_zoom = window_zoom(self.target, force=True)
         self.window_timer.start()
         self.bridge.start()
         self._set_status(
             f'Pinned to {self.target.application} — Ctrl+T unlocks; '
             'image follows')
         return True
+
+    def _paint_window_under(self, item):
+        """Return the Krita / Clip Studio window shown under the image."""
+        item_to_global = self._item_to_global_transform_for(item)
+        if item_to_global is None:
+            return None
+        center = native_point(item_to_global.map(item.crop.center()))
+        windows = visible_windows()
+        under = window_at(center, windows, os.getpid())
+        if under is not None:
+            logger.info('Window under the pinned image: %s',
+                        ntpath.basename(_process_path(under.hwnd)))
+        return paint_window_for(under, windows, find_paint_windows())
 
     def _set_status(self, message):
         """Avoid repainting the overlay UI for unchanged status text."""
@@ -402,6 +576,16 @@ class ClipStudioPinController(QtCore.QObject):
     def set_locked_visuals(self, locked):
         """Switch between editable BeeRef and the clipped lock overlay."""
         if self.item is None or self.item.scene() is None:
+            return
+        if self.screen_pinned:
+            # The image stays in the overlay window, which turns
+            # click-through; only hide the selection handles.
+            self._locked = bool(locked)
+            if locked:
+                self._selection_before_lock = self.item.isSelected()
+                self.item.setSelected(False)
+            elif self._selection_before_lock:
+                self.item.setSelected(True)
             return
         if locked:
             # Refresh before establishing the baseline, including when an
@@ -419,33 +603,10 @@ class ClipStudioPinController(QtCore.QObject):
             if self._selection_before_lock:
                 self.item.setSelected(True)
 
-    def _select_item_and_target(self):
-        selected = self.main_window.view.scene.selectedItems(user_only=True)
-        if len(selected) != 1 or not getattr(selected[0], 'is_image', False):
-            self._set_status('Select one image to attach')
-            return False
-        windows = find_paint_windows()
-        if not windows:
-            self._set_status('Disconnected: Krita / Clip Studio not found')
-            return False
-        if len(windows) == 1:
-            target = windows[0]
-        else:
-            labels = [f'{window.title} ({window.executable})'
-                      for window in windows]
-            label, ok = QtWidgets.QInputDialog.getItem(
-                self.main_window, 'Attach to paint application',
-                'Choose the Krita / Clip Studio window:', labels, 0, False)
-            if not ok:
-                return False
-            target = windows[labels.index(label)]
-        if self.item is not None and self.item is not selected[0]:
-            self._end_locked_overlay()
-        self.item = selected[0]
-        self.target = target
-        return True
-
     def resync(self):
+        if self.screen_pinned and self.item is not None:
+            self._set_status('Pinned in place — Ctrl+T unlocks')
+            return True
         if self.target is None or self.item is None:
             return self.attach()
         self._last_rect = window_rect(self.target)
@@ -478,6 +639,7 @@ class ClipStudioPinController(QtCore.QObject):
             del self._bridge_matrix
         self.target = None
         self.item = None
+        self.screen_pinned = False
         self._locked_item_to_global = None
         self._locked = False
         self._selection_before_lock = False
@@ -721,18 +883,18 @@ class ClipStudioPinController(QtCore.QObject):
 
     def _item_to_global_transform(self):
         """Return the selected image's exact local-to-desktop transform."""
-        if self.item is None:
+        return self._item_to_global_transform_for(self.item)
+
+    def _item_to_global_transform_for(self, item):
+        if item is None:
             return None
         scene_from_global = self._scene_from_global_transform()
         scene_to_global, invertible = scene_from_global.inverted()
         if not invertible:
             return None
-        origin = scene_to_global.map(
-            self.item.mapToScene(QtCore.QPointF(0, 0)))
-        x_point = scene_to_global.map(
-            self.item.mapToScene(QtCore.QPointF(1, 0)))
-        y_point = scene_to_global.map(
-            self.item.mapToScene(QtCore.QPointF(0, 1)))
+        origin = scene_to_global.map(item.mapToScene(QtCore.QPointF(0, 0)))
+        x_point = scene_to_global.map(item.mapToScene(QtCore.QPointF(1, 0)))
+        y_point = scene_to_global.map(item.mapToScene(QtCore.QPointF(0, 1)))
         return affine_from_points(origin, x_point, y_point)
 
     def _on_bridge_state(self, state):

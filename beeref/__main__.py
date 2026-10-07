@@ -291,7 +291,7 @@ class BeeRefApplication(QtWidgets.QApplication):
         elif hotkey_id == HOTKEY_RESYNC:
             self.main_window.pin_controller.resync()
         elif hotkey_id == HOTKEY_DETACH:
-            self.main_window.pin_controller.detach()
+            self.main_window.detach_pin()
 
     def nativeEventFilter(self, event_type, message):
         event_name = bytes(event_type).decode(errors='ignore') \
@@ -370,7 +370,7 @@ class BeeRefMainWindow(QtWidgets.QMainWindow):
 
     def _create_pin_actions(self):
         self.attach_pin_action = QtGui.QAction(
-            'Pin selected image to Krita / Clip Studio (Ctrl+T)', self)
+            'Pin selected image (Ctrl+T)', self)
         self.attach_pin_action.triggered.connect(self.pin_controller.attach)
         self.addAction(self.attach_pin_action)
         self.resync_pin_action = QtGui.QAction(
@@ -379,7 +379,7 @@ class BeeRefMainWindow(QtWidgets.QMainWindow):
         self.addAction(self.resync_pin_action)
         self.detach_pin_action = QtGui.QAction(
             'Detach pin (Ctrl+Shift+U)', self)
-        self.detach_pin_action.triggered.connect(self.pin_controller.detach)
+        self.detach_pin_action.triggered.connect(self.detach_pin)
         self.addAction(self.detach_pin_action)
 
     def _on_pin_status(self, message):
@@ -432,7 +432,7 @@ class BeeRefMainWindow(QtWidgets.QMainWindow):
     def _create_tray_icon(self, app):
         self.tray_icon = QtWidgets.QSystemTrayIcon(self.windowIcon(), app)
         self.tray_lock_action = QtGui.QAction(
-            'Pin to Krita / Clip Studio (Ctrl+T)', self)
+            'Pin selected image (Ctrl+T)', self)
         self.tray_lock_action.triggered.connect(self.handle_ctrl_t)
         # A native tray QMenu is another capturable popup. Show our child
         # controls on either left or right click instead.
@@ -449,6 +449,15 @@ class BeeRefMainWindow(QtWidgets.QMainWindow):
             self._update_lock_feedback()
         self.view.reference_controls.open(
             self.view.viewport().mapFromGlobal(QtGui.QCursor.pos()))
+
+    def detach_pin(self):
+        """Unpin the reference and make it editable again."""
+        self.pin_controller.detach()
+        # Otherwise the overlay stays click-through and the image cannot be
+        # selected to pin it again.
+        if self._mouse_passthrough:
+            self._set_mouse_passthrough(False)
+            self._update_lock_feedback()
 
     def start_phone_receiver(self):
         if getattr(self, '_phone_receiver', None) is None:
@@ -574,7 +583,9 @@ class BeeRefMainWindow(QtWidgets.QMainWindow):
             self._on_pin_status(
                 'Editable — drag image, then press Ctrl+T to pin again')
         else:
-            controller.resync()
+            # The image may have been moved onto or off Krita meanwhile.
+            if not controller.repin():
+                return
             self._set_mouse_passthrough(True)
             self._update_lock_feedback()
 

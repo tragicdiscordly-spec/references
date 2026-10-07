@@ -151,3 +151,31 @@ def test_edit_surface_never_covers_a_whole_monitor():
 def test_main_window_does_not_cover_whole_screen(main_window):
     for screen in QtGui.QGuiApplication.screens():
         assert not main_window.geometry().contains(screen.geometry())
+
+
+def test_detach_hotkey_makes_overlay_editable_again(
+        qapp, main_window, monkeypatch):
+    from beeref.__main__ import HOTKEY_DETACH
+    calls = []
+    monkeypatch.setattr(main_window, '_set_mouse_passthrough', calls.append)
+    monkeypatch.setattr(main_window.pin_controller, 'detach',
+                        lambda: calls.append('detach'))
+    main_window._mouse_passthrough = True
+    qapp.main_window = main_window
+    qapp.notify_hotkey(HOTKEY_DETACH)
+    assert calls == ['detach', False]
+
+
+def test_relocking_repins_where_the_image_is_now(main_window, monkeypatch):
+    controller = main_window.pin_controller
+    controller.item = object()
+    calls, result = [], []
+    monkeypatch.setattr(main_window, '_set_mouse_passthrough', calls.append)
+    monkeypatch.setattr(controller, 'repin', lambda: result.pop())
+    result.append(False)
+    main_window.handle_ctrl_t()
+    assert calls == []
+    result.append(True)
+    main_window.handle_ctrl_t()
+    assert calls == [True]
+    controller.item = None

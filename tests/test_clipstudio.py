@@ -5,7 +5,11 @@ import pytest
 from types import SimpleNamespace
 
 from beeref.__main__ import BeeRefMainWindow
-from beeref.clipstudio import ClipStudioPinController, LocalTransformBridge
+from beeref import clipstudio
+from beeref.clipstudio import (
+    ClipStudioPinController, ClipStudioWindow, DesktopWindow,
+    LocalTransformBridge, native_point, paint_application, paint_window_for,
+    window_at)
 from beeref.locked_overlay import LockedReferenceOverlay
 from beeref.items import BeePixmapItem
 
@@ -323,3 +327,105 @@ def test_bridge_ignores_malformed_state(qapp, tmp_path, content):
     bridge.poll()
     assert states == []
     assert disconnects == [True]
+
+
+@pytest.mark.parametrize('title,executable,expected', [
+    ('drawing.kra - Krita', r'C:\Program Files\Krita\bin\krita.exe',
+     'Krita'),
+    ('Untitled', r'C:\CELSYS\CLIPStudioPaint.exe', 'Clip Studio Paint'),
+    ('Krita tutorial - Google Chrome', r'C:\Chrome\chrome.exe', None),
+    # Windows hides the path of apps running as administrator.
+    ('drawing.kra - Krita', '', 'Krita'),
+    ('Notes', '', None),
+])
+def test_paint_application_matches_executable_not_browser_titles(
+        title, executable, expected):
+    assert paint_application(title, executable) == expected
+
+
+def _windows():
+    own = DesktopWindow(1, QtCore.QRect(0, 0, 4000, 1400), pid=100)
+    browser = DesktopWindow(2, QtCore.QRect(0, 0, 1000, 800), pid=200)
+    docker = DesktopWindow(3, QtCore.QRect(2000, 100, 300, 300), pid=300)
+    krita = DesktopWindow(4, QtCore.QRect(0, 0, 4000, 1400), pid=300)
+    return [own, browser, docker, krita]
+
+
+@pytest.mark.parametrize('point,expected', [
+    ((500, 500), None),     # A browser in front of maximized Krita.
+    ((2100, 200), 4),       # A floating Krita docker means Krita.
+    ((3000, 1000), 4),      # Krita's own window.
+    ((5000, 1000), None),   # Nothing but References there.
+])
+def test_paint_window_is_the_topmost_window_under_the_image(point, expected):
+    windows = _windows()
+    paint = [ClipStudioWindow(3, 'Layers', 'krita.exe', 'Krita', 300),
+             ClipStudioWindow(4, 'art.kra - Krita', 'krita.exe', 'Krita',
+                              300)]
+    under = window_at(QtCore.QPoint(*point), windows, own_pid=100)
+    target = paint_window_for(under, windows, paint)
+    assert (target.hwnd if target else None) == expected
+
+
+def test_native_point_scales_from_each_screen_origin():
+    screens = [_screen(1.25), _screen(1.5, x=4096)]
+    assert native_point(QtCore.QPointF(100, 80), screens) == (
+        QtCore.QPoint(125, 100))
+    assert native_point(QtCore.QPointF(4196, 10), screens) == (
+        QtCore.QPoint(4246, 15))
+
+
+def _pin_setup(main, monkeypatch, windows):
+    item = _image_item()
+    main.view.scene.addItem(item)
+    item.setSelected(True)
+    krita = ClipStudioWindow(4, 'art.kra - Krita', 'krita.exe', 'Krita', 300)
+    monkeypatch.setattr(clipstudio, 'visible_windows', lambda: windows)
+    monkeypatch.setattr(clipstudio, 'find_paint_windows', lambda: [krita])
+    monkeypatch.setattr(clipstudio, 'window_zoom', lambda *a, **k: None)
+    return item
+
+
+def test_image_away_from_krita_is_pinned_in_place(qapp, monkeypatch):
+    main = BeeRefMainWindow(qapp)
+    controller = main.pin_controller
+    item = _pin_setup(main, monkeypatch, [])
+    position = QtCore.QPointF(item.pos())
+
+    assert controller.attach()
+    assert controller.screen_pinned and controller.target is None
+    assert not controller.window_timer.isActive()
+    controller.set_locked_visuals(True)
+    assert controller._locked
+    assert item.isVisible() and not item.isSelected()
+    assert not controller.locked_overlay.active
+    assert controller.resync()
+    assert controller.screen_pinned and item.pos() == position
+    controller.set_locked_visuals(False)
+    assert item.isSelected()
+    controller.detach()
+    assert not controller.screen_pinned and controller.item is None
+    main.close()
+
+
+def test_relock_follows_krita_after_image_is_moved_onto_it(
+        qapp, monkeypatch):
+    main = BeeRefMainWindow(qapp)
+    controller = main.pin_controller
+    windows = []
+    item = _pin_setup(main, monkeypatch, windows)
+    assert controller.attach() and controller.screen_pinned
+
+    # Unlocked, the image is dragged onto a Krita window.
+    windows.append(DesktopWindow(4, QtCore.QRect(-5000, -5000, 10000, 10000),
+                                 pid=300))
+    assert controller.repin()
+    assert controller.item is item and not controller.screen_pinned
+    assert controller.target.application == 'Krita'
+    assert controller.window_timer.isActive()
+
+    windows.clear()
+    assert controller.repin() and controller.screen_pinned
+    assert not controller.window_timer.isActive()
+    controller.detach()
+    main.close()
