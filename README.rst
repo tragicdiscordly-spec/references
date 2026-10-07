@@ -27,9 +27,14 @@ click the purple tray icon for the controls. Use the File menu to add images
 or open and save reference boards. The Images menu contains opacity and
 grayscale.
 
-* ``Ctrl+T``: lock or unlock the selected reference.
+* ``Ctrl+T``: pin the selected reference, or unpin it to edit it. A pinned
+  reference is click-through. Over Krita or Clip Studio it follows the
+  canvas as you pan and zoom; over any other window it stays where it is.
 * ``Ctrl+Shift+R``: resync the reference placement.
-* ``Ctrl+Shift+U``: detach the reference.
+* ``Ctrl+Shift+U``: detach the reference and make it editable again.
+
+The overlay covers every monitor except the taskbar, so Windows never treats
+it as a full-screen app.
 
 Sending an image from your phone
 --------------------------------

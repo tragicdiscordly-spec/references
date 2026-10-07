@@ -48,6 +48,7 @@ and draws in Krita underneath it.
 
 The pinned reference must:
 
+- pin in place over any other window too, without following it;
 - stay aligned when the Krita window moves or is resized;
 - follow Krita canvas panning and zooming without cumulative drift;
 - remain click-through while locked so brush and middle-mouse input reaches
@@ -121,9 +122,28 @@ Restart both apps after updating the bridge. Headless tests can be run with
 `$env:QT_QPA_PLATFORM='offscreen'; python -m pytest -q` without inspecting or
 controlling the user's Krita canvas.
 
+## Screen pins and the taskbar
+
+The transparent edit window covers the monitors' available areas, never a
+whole monitor (`edit_surface_rect` in `beeref/__main__.py`). A window covering
+a monitor makes Windows treat it as a full-screen app: the taskbar hid and
+do-not-disturb could turn on. Do not size it from `QScreen.geometry()`.
+
+Ctrl+T follows Krita or Clip Studio only when the topmost window under the
+image's center belongs to one (`visible_windows`, `window_at` and
+`paint_window_for` in `beeref/clipstudio.py`; References' own, minimized,
+cloaked and click-through windows are skipped). Paint windows are matched by
+executable, not title. Otherwise the controller is `screen_pinned`: the image
+stays in the click-through main window, no bridge or window timer runs, and
+Ctrl+Shift+R does nothing. Relocking after an unlock checks the window under
+the image again, so dragging it onto or off Krita switches modes. The log
+records which executable was found under the image. Ctrl+Shift+U also turns
+click-through off so the image can be selected again.
+
 ## Hotkeys
 
-- Ctrl+T: attach and lock the selected image; press again to unlock.
+- Ctrl+T: pin and lock the selected image (to Krita/Clip Studio when it is
+  over one, otherwise in place); press again to unlock.
 - Ctrl+Shift+R: resync the current image position.
 - Ctrl+Shift+U: detach the pin.
 
